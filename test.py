@@ -7,7 +7,6 @@ import asyncio
 import io
 import signal
 from contextlib import suppress
-from typing import Dict
 
 from attrs import define, field
 from PIL import Image
@@ -48,7 +47,7 @@ class PulseDefaultSinkKey:
     Stream Deck key for switching the default PulseAudio sink.
     """
 
-    outputs: Dict
+    outputs: dict = field()
 
     deck: StreamDeck = field(init=False)
     key: int = field(init=False)
@@ -56,6 +55,9 @@ class PulseDefaultSinkKey:
     pulse: PulseAudioCoordinator = field(init=False)
 
     async def activate(self, deck, key):
+        """
+        Activate this key.
+        """
         self.deck = deck
         self.key = key
 
@@ -63,8 +65,19 @@ class PulseDefaultSinkKey:
         async for sink_name in self.pulse.listen_default_sink():
             await self.on_sink(sink_name)
 
+    async def deactivate(self):
+        """
+        Deactivate this key.
+        """
+        self.deck.set_key_image(self.key, None)
+        self.deck.close()
+        await asyncio.sleep(2)
+
     async def on_press(self):
-        for name, output in outputs.items():
+        """
+        The Stream Deck key was pressed.
+        """
+        for name, _ in outputs.items():
             print(name)
             if name != self.output:
                 new_name = name
@@ -74,10 +87,13 @@ class PulseDefaultSinkKey:
             print(f"new name: {new_name}")
             await self.pulse.set_default_sink(outputs[new_name]["sink"])
             self.output = new_name
-        except Exception as e:
-            print(e)
+        except Exception as exc:
+            print(exc)
 
     async def on_sink(self, sink_name):
+        """
+        The PulseAudio default sink changed.
+        """
         sink = await self.pulse.pulse.get_sink_by_name(sink_name)
         print(repr(sink))
 
@@ -105,7 +121,7 @@ class Controller:
     done: asyncio.Event = field(init=False, factory=asyncio.Event)
 
     async def key_change(self, deck, key, key_state):
-        if deck != self.deck or key != 0 or not key_state:
+        if deck != self.deck or key != self.key.key or not key_state:
             return
 
         await self.key.on_press()
@@ -130,11 +146,13 @@ class Controller:
 
             break
 
-        await self.done.wait()
+        with suppress(asyncio.CancelledError):
+            await self.done.wait()
 
 
 async def main():
     loop = asyncio.get_event_loop()
+    main_task = asyncio.current_task(loop)
 
     key = PulseDefaultSinkKey(outputs)
     controller = Controller(key)
@@ -142,12 +160,31 @@ async def main():
     # Run listen() coroutine in task to allow cancelling it
     listen_task = asyncio.create_task(controller.listen())
 
-    # cancel listener when program is asked to terminate
-    for sig in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT):
-        loop.add_signal_handler(sig, listen_task.cancel)
+    async def shutdown() -> None:
+        """
+        Cancel all running async tasks (other than this one) when called.
+        By catching asyncio.CancelledError, any running task can perform
+        any necessary cleanup when it's cancelled.
+        """
+        tasks = []
+        for task in asyncio.all_tasks(loop):
+            if task not in (asyncio.current_task(loop), main_task):
+                task.cancel()
+                tasks.append(task)
+        await asyncio.gather(*tasks, return_exceptions=True)
 
-    with suppress(asyncio.CancelledError):
+    # register signal handlers to stop tasks
+    for sig in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT):
+        loop.add_signal_handler(sig, lambda: asyncio.create_task(shutdown()))
+
+    try:
         await listen_task
+    except asyncio.CancelledError:
+        await key.deactivate()
+    except Exception as exc:
+        print(exc)
+        raise
+    print()
 
 
 # Run event loop until main_task finishes

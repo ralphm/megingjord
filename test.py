@@ -70,8 +70,6 @@ class PulseDefaultSinkKey:
         Deactivate this key.
         """
         self.deck.set_key_image(self.key, None)
-        self.deck.close()
-        await asyncio.sleep(2)
 
     async def on_press(self):
         """
@@ -149,16 +147,23 @@ class Controller:
         with suppress(asyncio.CancelledError):
             await self.done.wait()
 
+    async def start(self):
+        listen_task = asyncio.create_task(self.listen())
+
+        with suppress(asyncio.CancelledError):
+            await listen_task
+
+        # Clean up
+        print(f"Cleaning up")
+        await self.key.deactivate()
+        self.deck.close()
+        await asyncio.sleep(2)
+
+
 
 async def main():
     loop = asyncio.get_event_loop()
     main_task = asyncio.current_task(loop)
-
-    key = PulseDefaultSinkKey(outputs)
-    controller = Controller(key)
-
-    # Run listen() coroutine in task to allow cancelling it
-    listen_task = asyncio.create_task(controller.listen())
 
     async def shutdown() -> None:
         """
@@ -169,21 +174,20 @@ async def main():
         tasks = []
         for task in asyncio.all_tasks(loop):
             if task not in (asyncio.current_task(loop), main_task):
+                print(f"Shutting down {task}")
                 task.cancel()
                 tasks.append(task)
-        await asyncio.gather(*tasks, return_exceptions=True)
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        print(f"Shutdown results: {results}")
 
     # register signal handlers to stop tasks
     for sig in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT):
         loop.add_signal_handler(sig, lambda: asyncio.create_task(shutdown()))
 
-    try:
-        await listen_task
-    except asyncio.CancelledError:
-        await key.deactivate()
-    except Exception as exc:
-        print(exc)
-        raise
+    key = PulseDefaultSinkKey(outputs)
+    controller = Controller(key)
+    await controller.start()
+
     print()
 
 

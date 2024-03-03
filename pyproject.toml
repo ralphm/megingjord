@@ -70,6 +70,10 @@ no-cov = "cov --no-cov {args}"
 [[tool.hatch.envs.test.matrix]]
 python = ["310", "311"]
 
+[[tool.mypy.overrides]]
+module = "StreamDeck.*,aiohue,svgelements,cairosvg,pulsectl,pulsectl_asyncio,aiohue.*,PIL"
+ignore_missing_imports = true
+
 [tool.coverage.run]
 branch = true
 parallel = true

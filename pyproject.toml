@@ -1,8 +1,11 @@
 [build-system]
-requires = ["hatchling"]
+requires = [
+    "hatchling",
+]
 build-backend = "hatchling.build"
 
 [project]
+dynamic = []
 name = "megingjord"
 version = "0.0.1"
 description = ''
@@ -27,12 +30,33 @@ dependencies = [
     "pillow >= 9.0.0",
     "pulsectl-asyncio",
 ]
-dynamic = []
+[project.optional-dependencies]
+tests = [
+    "pytest",
+    "pytest-asyncio",
+]
+cov = [
+    "megingjord[tests]",
+    "coverage"
+]
+mypy = [
+]
+dev = [
+    "megingjord[cov,mypy,tests]",
+    "black",
+    "flake8",
+    "mypy",
+    "pre-commit",
+    "pylint",
+]
 
 [project.urls]
 Documentation = "https://github.com/ralphm/megingjord#readme"
 Issues = "https://github.com/ralphm/megingjord/issues"
 Source = "https://github.com/ralphm/megingjord"
+
+[tool.black]
+line-length = 79
 
 [tool.hatch.envs.default]
 dependencies = [

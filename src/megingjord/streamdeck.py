@@ -6,12 +6,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from contextlib import suppress
+import textwrap
 from datetime import datetime
 from io import BytesIO
 from pathlib import Path
 from typing import Protocol
 
+from aiohttp import web
 from attrs import define, field
 from cairosvg import svg2png
 from PIL import Image, ImageDraw, ImageFont
@@ -23,6 +24,9 @@ from StreamDeck.Transport.Transport import TransportError
 from svgelements import SVG, Color, Matrix, Rect, Text
 
 from .color_utils import black_or_white, make_triad
+
+logger = logging.getLogger(__name__)
+
 
 UBUNTU_FONT = Path("/usr/share/fonts/truetype/ubuntu/Ubuntu-R.ttf")
 
@@ -61,6 +65,7 @@ class DeckController:
     Stream Deck controller
     """
 
+    app: web.Application
     icon_path: Path
     deck: StreamDeck = field(init=False, default=None)
     done: asyncio.Event = field(init=False, factory=asyncio.Event)
@@ -103,6 +108,8 @@ class DeckController:
         self.deck = deck = streamdecks[0]
 
         deck.open()
+        logger.info("Opened Stream Deck")
+
         deck.reset()
 
         deck.set_key_callback_async(self.on_key_change)
@@ -120,47 +127,50 @@ class DeckController:
 
         await asyncio.gather(*tasks)
 
-        with suppress(asyncio.CancelledError):
-            await self.done.wait()
+        await self.done.wait()
 
     async def start(self):
         """
         Start the deck
         """
 
-        with suppress(asyncio.CancelledError):
+        try:
             while True:
-                listen_task = asyncio.create_task(self.listen())
                 try:
-                    await listen_task
+                    await self.listen()
                 except TransportError:
-                    logging.error(
+                    logger.error(
                         "Lost connection to Stream Deck", exc_info=True
                     )
+                except Exception:  # pylint: disable=W0718
+                    logger.error("Oops", exc_info=True)
 
-                logging.info("Waiting 10 seconds to reconnect to Stream Deck.")
+                logger.info("Waiting 10 seconds to reconnect to Stream Deck.")
                 await asyncio.sleep(10)
-
-        await self.stop()
+        finally:
+            await self.stop()
 
     async def stop(self):
         """
         Stop the deck.
         """
+        logger.debug("Stopping the deck")
 
         for key in self.keys.values():
             await key.stop()
 
         self.deck.set_brightness(0)
+        self.deck.reset()
         self.deck.close()
-        await asyncio.sleep(2)
+        await asyncio.sleep(0.5)
 
     def draw_tile(  # pylint: disable=R0913
         self,
-        text: str,
+        title: str,
         background_color: str,
         primary_icon: str | None = None,
         secondary_icon: str | None = None,
+        subtitle: str | None = None,
     ) -> bytes:
         """
         Draw a tile with a text, and optional icons.
@@ -185,19 +195,19 @@ class DeckController:
                 draw_icon(
                     path=self.icon_path / f"{secondary_icon}.svg",
                     color=color_triad[1],
-                    size=60,
-                    pos_x=5,
+                    size=50,
+                    pos_x=10,
                     pos_y=20,
                 )
             )
 
         if primary_icon:
             if secondary_icon:
-                size = 80
-                pos_x, pos_y = 35, 35
+                size = 70
+                pos_x, pos_y = 40, 35
             else:
-                size = 90
-                pos_x, pos_y = 15, 20
+                size = 80
+                pos_x, pos_y = 20, 20
 
             tile.append(
                 draw_icon(
@@ -209,9 +219,11 @@ class DeckController:
                 )
             )
 
+        title = textwrap.shorten(title, 15, placeholder="…")
+
         tile.append(
             Text(
-                text,
+                title,
                 x=60,
                 y=16,
                 font_size=16,
@@ -220,6 +232,19 @@ class DeckController:
                 fill=text_color,
             )
         )
+
+        if subtitle:
+            tile.append(
+                Text(
+                    subtitle,
+                    x=60,
+                    y=114,
+                    font_size=12,
+                    text_anchor="middle",
+                    font_family="sans",
+                    fill=text_color,
+                )
+            )
 
         png = BytesIO(
             svg2png(
@@ -267,7 +292,7 @@ def draw_time(deck):
 
     dt = datetime.now()
     date_str = f"{dt:%A} {dt.day} {dt:%B} {dt.year}"
-    time_str = f"{dt:%H}:{dt:%M}"
+    time_str = f"{dt:%H}:{dt:%M}:{dt:%S}"
 
     middle = deck.TOUCHSCREEN_PIXEL_WIDTH / 2.0
     font = ImageFont.truetype(

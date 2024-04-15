@@ -29,6 +29,10 @@ dependencies = [
     "streamdeck >= 0.9.5",
     "pillow >= 9.0.0",
     "pulsectl-asyncio",
+    "aiohttp",
+    "aiohue",
+    "CairoSVG",
+    "svgelements",
 ]
 [project.optional-dependencies]
 tests = [

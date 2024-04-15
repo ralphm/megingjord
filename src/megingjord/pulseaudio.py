@@ -6,8 +6,9 @@ import asyncio
 import logging
 import pprint
 from contextlib import suppress
-from typing import Any, AsyncIterator
+from typing import Any, AsyncGenerator, AsyncIterator
 
+from aiohttp import web
 from attrs import define, field
 from pulsectl import (PulseCardInfo, PulseCardPortInfo, PulseDisconnected,
                       PulseEventInfo, PulseSinkInfo)
@@ -15,6 +16,8 @@ from pulsectl_asyncio import PulseAsync
 from StreamDeck.Devices.StreamDeck import StreamDeck
 
 from .streamdeck import DeckController
+
+logger = logging.getLogger(__name__)
 
 ICON_MAP = {
     None: "speaker-off",
@@ -37,12 +40,15 @@ class PulseAudioCoordinator:
     changes to the current default sink.
     """
 
-    output_weights: dict[str, int]
+    app: web.Application
+    output_weights: list[dict[str, Any]]
     pulse: PulseAsync | None = field(init=False, default=None)
-    started: bool = field(init=False, default=False)
     subscribers: dict[object, asyncio.Queue[PulseEventInfo]] = field(
         init=False, factory=dict
     )
+
+    def __attrs_post_init__(self):
+        self.app.cleanup_ctx.append(self.start)
 
     async def get_pulse(self) -> PulseAsync:
         """
@@ -53,64 +59,63 @@ class PulseAudioCoordinator:
 
         self.pulse = PulseAsync("megingjord")
         await self.pulse.connect()
-        logging.info("Connected to PulseAudio")
+        logger.info("Connected to PulseAudio")
         return self.pulse
 
     async def listen(self) -> None:
         """
         Subscribe for PulseAudio server events.
         """
-        logging.info("Waiting for events")
+        logger.info("Waiting for events")
 
-        while True:
-            pulse = await self.get_pulse()
+        try:
+            while True:
+                pulse = await self.get_pulse()
 
-            assert self.pulse is not None
+                await pulse._connected.wait()  # pylint: disable=W0212
 
-            await self.pulse._connected.wait()  # pylint: disable=W0212
+                logger.info("Subscribing to events")
 
-            logging.info("Subscribing to events")
+                try:
+                    async for event in pulse.subscribe_events("all"):
+                        logger.debug(f"Yielding {event!r}")
+                        for queue in self.subscribers.values():
+                            await queue.put(event)
+                except PulseDisconnected:
+                    logger.info("Disconnected from PulseAudio")
+                    self.pulse = None
+                except Exception:  # pylint: disable=W0718
+                    logger.error(
+                        "Exception raised while processing events",
+                        exc_info=True,
+                    )
+        finally:
+            logger.debug("Cleaning up subscibers")
+            for queue in self.subscribers.values():
+                await queue.put(None)
 
-            try:
-                async for event in pulse.subscribe_events("all"):
-                    logging.debug(f"Yielding {event!r}")
-                    for queue in self.subscribers.values():
-                        await queue.put(event)
-            except PulseDisconnected:
-                logging.info("Disconnected from PulseAudio")
-                self.pulse = None
-            except Exception:  # pylint: disable=W0718
-                logging.error(
-                    "Exception raised while processing events", exc_info=True
-                )
-
-    async def start(self):
+    async def start(self, _app: web.Application) -> AsyncGenerator:
         """
         Start the coordinator.
 
         This initiates listening for Pulse Audio events and cleans up when
         the task is cancelled upon shutdown.
         """
-        if self.started:
-            return
 
-        listen_task = asyncio.create_task(self.listen())
+        task = asyncio.create_task(self.listen())
 
-        self.started = True
+        yield
 
+        task.cancel()
         with suppress(asyncio.CancelledError):
-            await listen_task
-
-        self.started = False
-
-        for queue in self.subscribers.values():
-            await queue.put(None)
+            await task
 
     async def get_default_sink(self) -> PulseSinkInfo:
         """
         Extract default sink from server info.
         """
         pulse = await self.get_pulse()
+        await pulse._connected.wait()  # pylint: disable=W0212
         info = await pulse.server_info()
         return info.default_sink_name
 
@@ -122,11 +127,10 @@ class PulseAudioCoordinator:
         queue: asyncio.Queue[PulseEventInfo] = asyncio.Queue()
         self.subscribers[key] = queue
 
-        asyncio.create_task(self.start())
-
         done = False
 
         while not done:
+            logger.debug("Not done yet")
             yield await self.get_default_sink()
             done = await queue.get() is None
 
@@ -193,16 +197,35 @@ class PulseAudioCoordinator:
         pulse = await self.get_pulse()
         cards = await pulse.card_list()
 
+        def check_resource(matcher, resource):
+            if "name" in matcher:
+                if resource.name != matcher["name"]:
+                    return False
+            for key, value in matcher.get("proplist", {}).items():
+                if key not in resource.proplist:
+                    return False
+                if value != resource.proplist[key]:
+                    return False
+            return True
+
+        def check_rule(rule, card, port):
+            return check_resource(
+                rule.get("card", {}), card
+            ) and check_resource(rule.get("port", {}), port)
+
         outputs: list[dict[str, Any]] = []
         for card in cards:
             for port in card.port_list:
                 if port.direction == "output" and port.available != "no":
+                    weight_adjust = 0
+                    for weight_rule in self.output_weights:
+                        if check_rule(weight_rule, card, port):
+                            weight_adjust += weight_rule["weight"]
                     outputs.append(
                         {
                             "card": card,
                             "port": port,
-                            "priority": port.priority
-                            + self.output_weights.get(port.name, 0),
+                            "priority": port.priority + weight_adjust,
                         }
                     )
 
@@ -220,22 +243,22 @@ class PulseAudioCoordinator:
 
         try:
             outputs = await self.get_outputs()
-            logging.debug(f"Possible outputs: {pprint.pformat(outputs)}")
+            logger.debug(f"Possible outputs: {pprint.pformat(outputs)}")
         except Exception:  # pylint: disable=W0718
-            logging.error("oops", exc_info=True)
+            logger.error("oops", exc_info=True)
             raise
 
-        logging.debug(f"  Current Sink: {current_sink}")
-        logging.debug("  Trying outputs:")
+        logger.debug(f"  Current Sink: {current_sink}")
+        logger.debug("  Trying outputs:")
 
         # Switch to first available different output
         for output in outputs:
-            logging.debug(f"    Output {output}:")
+            logger.debug(f"    Output {output}:")
             if (
                 output["card"].index == current_sink.card
                 and output["port"].name == current_sink.port_active.name
             ):
-                logging.debug(
+                logger.debug(
                     "      This is the currently active output, skipping"
                 )
                 # Skip current sink
@@ -281,18 +304,18 @@ class PulseDefaultSinkKey:
         if not key_state:
             return
 
-        logging.debug("Key pressed:")
+        logger.debug("Key pressed:")
 
         output = await self.pulse.get_next_available_output()
         if not output:
-            logging.info("      No output to change to.")
+            logger.info("      No output to change to.")
             return
 
-        logging.debug("      Setting as default")
+        logger.debug("      Setting as default")
         try:
             await self.pulse.set_default_sink(output["card"], output["port"])
         except Exception:  # pylint: disable=W0718
-            logging.error("Failed to set default sink", exc_info=True)
+            logger.error("Failed to set default sink", exc_info=True)
 
     async def on_sink(self, sink_name):
         """
@@ -301,7 +324,9 @@ class PulseDefaultSinkKey:
         try:
             self.current_sink_name = sink_name
             new_sink = await self.pulse.pulse.get_sink_by_name(sink_name)
-            primary_icon = await self.get_sink_icon(new_sink)
+            card, port = await self.pulse.get_card_port_from_sink(new_sink)
+
+            primary_icon = self.get_port_icon(card, port)
 
             output = await self.pulse.get_next_available_output()
             if output:
@@ -311,21 +336,18 @@ class PulseDefaultSinkKey:
             else:
                 secondary_icon = None
         except Exception:  # pylint: disable=W0718
-            logging.error("Failed to retrieve output details", exc_info=True)
+            logger.error("Failed to retrieve output details", exc_info=True)
             primary_icon = "help-rhombus-outline"
             secondary_icon = None
 
         tile = self.controller.draw_tile(
-            "Output", "#336699", primary_icon, secondary_icon
+            self.get_device_name(card, port),
+            "#336699",
+            primary_icon,
+            secondary_icon,
+            subtitle=self.get_port_name(port),
         )
         self.deck.set_key_image(self.key, tile)
-
-    async def get_sink_icon(self, sink: PulseSinkInfo) -> str | None:
-        """
-        Get the icon for a Pulse Audio sink.
-        """
-        card, port = await self.pulse.get_card_port_from_sink(sink)
-        return self.get_port_icon(card, port)
 
     def get_port_icon(
         self, card: PulseCardInfo, port: PulseCardPortInfo
@@ -337,4 +359,21 @@ class PulseDefaultSinkKey:
             port.proplist.get(
                 "device.icon_name", card.proplist.get("device.icon_name")
             )
+        )
+
+    def get_port_name(self, port: PulseCardPortInfo) -> str:
+        """
+        Get the name for a Pulse Audio port.
+        """
+        return port.description
+
+    def get_device_name(
+        self, card: PulseCardInfo, port: PulseCardPortInfo
+    ) -> str:
+        """
+        Get the name for a Pulse Audio port.
+        """
+        return port.proplist.get(
+            "device.product.name",
+            card.proplist.get("device.description", "Output"),
         )

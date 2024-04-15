@@ -4,8 +4,9 @@ Philips Hue support.
 
 import asyncio
 import logging
-from typing import Callable
+from typing import AsyncGenerator, Callable
 
+from aiohttp import web
 from aiohue import HueBridgeV2
 from aiohue.v2.controllers.events import EventType
 from aiohue.v2.models.light import Light
@@ -15,27 +16,48 @@ from StreamDeck.Devices.StreamDeck import StreamDeck
 from .color_utils import rgb_to_hex, scale_rgb_tuple, xyb_to_rgb
 from .streamdeck import DeckController
 
+logger = logging.getLogger(__name__)
 
-async def get_bridge(host: str, app_key: str) -> HueBridgeV2:
+
+@define
+class HueCoordinator:
     """
-    Get a Hue Bridge instance and setup cleanup.
+    Philips Hue Coordinator.
+
+    Continues to spawn L{HueBridgeV2} objects until shutdown.
     """
 
-    bridge = HueBridgeV2(host, app_key)
+    app: web.Application
+    host: str
+    app_key: str
 
-    done = asyncio.Event()
+    bridge: HueBridgeV2 | None = field(init=False, default=None)
+    done: asyncio.Event = field(init=False, factory=asyncio.Event)
 
-    async def cleanup():
-        try:
-            await done.wait()
-        finally:
-            await bridge.close()
+    def __attrs_post_init__(self):
+        self.app.cleanup_ctx.append(self.start)
 
-    asyncio.create_task(cleanup())
+    async def get_bridge(self) -> HueBridgeV2:
+        """
+        Return the current Bridge object.
+        """
+        if self.bridge:
+            return self.bridge
 
-    await bridge.initialize()
+        self.bridge = HueBridgeV2(self.host, self.app_key)
+        await self.bridge.initialize()
 
-    return bridge
+        return self.bridge
+
+    async def start(self, _app: web.Application) -> AsyncGenerator:
+        """
+        Start the coordinator.
+        """
+        bridge = await self.get_bridge()
+
+        yield
+
+        await bridge.close()
 
 
 @define
@@ -45,7 +67,7 @@ class HueLightToggleKey:
     """
 
     key: int
-    bridge: HueBridgeV2
+    hue: HueCoordinator
     light_id: str
 
     controller: DeckController | None = field(init=False)
@@ -57,19 +79,20 @@ class HueLightToggleKey:
         Start this key.
         """
         self.deck = deck
+        bridge = await self.hue.get_bridge()
         self.unsubscribes = [
-            self.bridge.events.subscribe(
+            bridge.events.subscribe(
                 self.on_hue_connected,
                 (EventType.CONNECTED, EventType.DISCONNECTED),
             ),
-            self.bridge.events.subscribe(
+            bridge.events.subscribe(
                 self.on_hue_disconnected, EventType.DISCONNECTED
             ),
-            self.bridge.lights.subscribe(
+            bridge.lights.subscribe(
                 self.on_hue_light, id_filter=self.light_id
             ),
         ]
-        self.set_tile_to_light(light_id=self.light_id)
+        await self.set_tile_to_light(light_id=self.light_id)
 
     async def stop(self) -> None:
         """
@@ -86,7 +109,7 @@ class HueLightToggleKey:
         """
         The Hue bridge was connected.
         """
-        self.set_tile_to_light(light_id=self.light_id)
+        await self.set_tile_to_light(light_id=self.light_id)
 
     async def on_hue_disconnected(
         self, _event_type: EventType, _event: dict | None = None
@@ -94,7 +117,7 @@ class HueLightToggleKey:
         """
         The Hue bridge was disconnected.
         """
-        self.set_tile_to_light()
+        await self.set_tile_to_light()
 
     async def on_key_change(self, key_state: bool) -> None:
         """
@@ -105,15 +128,15 @@ class HueLightToggleKey:
             return
 
         try:
-            light = self.bridge.lights[self.light_id]
-            await self.bridge.lights.set_state(
-                self.light_id, on=not light.on.on
-            )
-        except Exception:  # pylint: disable=W0718
-            logging.error("Failed to set light state", exc_info=True)
-            self.set_tile_to_light(light_id=self.light_id)
+            bridge = await self.hue.get_bridge()
 
-    def set_tile_to_light(
+            light = bridge.lights[self.light_id]
+            await bridge.lights.set_state(self.light_id, on=not light.on.on)
+        except Exception:  # pylint: disable=W0718
+            logger.error("Failed to set light state", exc_info=True)
+            await self.set_tile_to_light(light_id=self.light_id)
+
+    async def set_tile_to_light(
         self, light: Light | None = None, light_id: str | None = None
     ) -> None:
         """
@@ -126,15 +149,17 @@ class HueLightToggleKey:
             return
 
         try:
+            bridge = await self.hue.get_bridge()
+
             if light_id:
-                light = self.bridge.lights.get(self.light_id)
+                light = bridge.lights.get(self.light_id)
 
             if not light:
                 text = "Disconnected"
                 icon = "lightbulb-question-outline"
                 color = "#330000"
             else:
-                device = self.bridge.lights.get_device(self.light_id)
+                device = bridge.lights.get_device(self.light_id)
                 text = device.metadata.name
 
                 if light.is_on:
@@ -145,19 +170,19 @@ class HueLightToggleKey:
                         rgb = xyb_to_rgb(x, y, brightness)
                         scaled_rgb = scale_rgb_tuple(rgb, down=False)
                         color = rgb_to_hex(scaled_rgb)
-                        logging.debug(f"  color: {rgb} {scaled_rgb} {color}")
+                        logger.debug(f"  color: {rgb} {scaled_rgb} {color}")
                     else:
                         color = "#996633"
                 else:
                     icon = "lightbulb-off-outline"
                     color = "#330000"
         except Exception:  # pylint: disable=W0718
-            logging.error("Couldn't get light information", exc_info=True)
+            logger.error("Couldn't get light information", exc_info=True)
             text = "Error"
             icon = "lightbulb-alert-outline"
             color = "#330000"
 
-        logging.debug(f"Setting key {self.key} to icon {icon}: {text!r}")
+        logger.debug(f"Setting key {self.key} to icon {icon}: {text!r}")
         tile = self.controller.draw_tile(text, color, icon)
 
         self.deck.set_key_image(self.key, tile)
@@ -167,7 +192,7 @@ class HueLightToggleKey:
         A Hue event was received.
         """
         if light.id != self.light_id:
-            logging.debug(f"Ignoring light {light}")
+            logger.debug(f"Ignoring light {light}")
             return
 
-        self.set_tile_to_light(light)
+        await self.set_tile_to_light(light)

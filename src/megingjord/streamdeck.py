@@ -19,7 +19,7 @@ from attrs import define, field
 from cairosvg import svg2png
 from PIL import Image, ImageDraw, ImageFont
 from StreamDeck.DeviceManager import DeviceManager
-from StreamDeck.Devices.StreamDeck import StreamDeck
+from StreamDeck.Devices.StreamDeck import DialEventType, StreamDeck
 from StreamDeck.ImageHelpers.PILHelper import _to_native_format
 from StreamDeck.Transport.Transport import TransportError
 from svgelements import SVG, Color, Matrix, Rect, Text
@@ -42,7 +42,9 @@ class Key(Protocol):
     key: int
 
     def __init__(self, key: int) -> None:
-        ...
+        """
+        Initialize.
+        """
 
     async def start(self, deck: StreamDeck) -> None:
         """
@@ -60,6 +62,52 @@ class Key(Protocol):
         """
 
 
+class Dial(Protocol):
+    """
+    A Stream Deck + dial with rendering of a tile on the LCD.
+    """
+
+    controller: DeckController | None
+    deck: StreamDeck
+    dial: int
+
+    def __init__(self, dial: int) -> None:
+        """
+        Initialize.
+        """
+
+    async def start(self, deck: StreamDeck) -> None:
+        """
+        Start the dial.
+        """
+
+    async def stop(self) -> None:
+        """
+        Stop the dial.
+        """
+
+    async def on_dial_push(self, dial_state: bool) -> None:
+        """
+        Called when the dial got pressed or released.
+        """
+
+    async def on_dial_turn(self, value: int) -> None:
+        """
+        Called when the dial got turned.
+        """
+
+    async def render(self, mini: bool = False) -> Image.Image:
+        """
+        Render the portion of the LCD display (tile) for this dial.
+
+        The parameter C{mini} is set to true if the part of the display for
+        this dial is potentially obscured by an overlay. Overlays are expected
+        to cover only the top half of the display, so a minimized version of
+        the information rendered on the bottom half of the tile should alway be
+        visible.
+        """
+
+
 @define
 class DeckController:
     """
@@ -71,6 +119,7 @@ class DeckController:
     deck: StreamDeck = field(init=False, default=None)
     done: asyncio.Event = field(init=False, factory=asyncio.Event)
     keys: dict[int, Key] = field(init=False, factory=dict)
+    dials: dict[int, Dial] = field(init=False, factory=dict)
 
     # Status bar inhibited until this time
     status_inhibited: float = field(init=False, default=0)
@@ -103,6 +152,44 @@ class DeckController:
         except Exception:  # pylint: disable=W0718
             logger.error("Failed to process key change", exc_info=True)
 
+    def register_dial(self, dial: Dial) -> None:
+        """
+        Register a dial.
+        """
+        dial.controller = self
+        self.dials[dial.dial] = dial
+
+    def unregister_dial(self, dial: Dial) -> None:
+        """
+        Unregister a dial.
+        """
+        dial.controller = None
+        del self.dials[dial.dial]
+
+    async def on_dial_change(
+        self,
+        deck: StreamDeck,
+        dial: int,
+        event_type: DialEventType,
+        value: int | bool,
+    ) -> None:
+        """
+        Called when the dial was pushed, released or turned.
+        """
+        if deck != self.deck or dial not in self.dials:
+            return
+
+        try:
+            if event_type == DialEventType.PUSH:
+                assert isinstance(value, bool)
+                await self.dials[dial].on_dial_push(value)
+            else:
+                assert isinstance(value, int)
+                await self.dials[dial].on_dial_turn(value)
+
+        except Exception:  # pylint: disable=W0718
+            logger.error("Failed to process dial change", exc_info=True)
+
     async def listen(self) -> None:
         """
         Find a Stream Deck, open and initialize.
@@ -123,13 +210,22 @@ class DeckController:
         deck.set_key_image(0, None)  # Resets the LCD display :/
 
         deck.set_key_callback_async(self.on_key_change)
+        deck.set_dial_callback_async(self.on_dial_change)
 
-        deck.set_brightness(100)
+        deck.brightness = 100
+        self.set_brightness(deck.brightness)
 
         tasks.extend(
             [
                 asyncio.create_task(key.start(deck))
                 for key in self.keys.values()
+            ]
+        )
+
+        tasks.extend(
+            [
+                asyncio.create_task(dial.start(deck))
+                for dial in self.dials.values()
             ]
         )
 
@@ -139,7 +235,7 @@ class DeckController:
 
         await self.done.wait()
 
-    async def start(self):
+    async def start(self) -> None:
         """
         Start the deck
         """
@@ -160,7 +256,7 @@ class DeckController:
         finally:
             await self.stop()
 
-    async def stop(self):
+    async def stop(self) -> None:
         """
         Stop the deck.
         """
@@ -278,6 +374,86 @@ class DeckController:
         )
         return svg_to_image(svg, width=size, height=size)
 
+    def draw_dial_tile(  # pylint: disable=R0913,R0914
+        self,
+        title: str,
+        icon: str,
+        value: float,
+        color: str = "white",
+        mini: bool = False,
+    ) -> Image.Image:
+        """
+        Draw dial tile for LCD.
+        """
+        image = Image.new("RGBA", (140, 100), "#000000ff")
+
+        draw = ImageDraw.Draw(image)
+
+        margin_left = margin_right = 10
+        margin_top = margin_bottom = 2
+        icon_size = 40
+
+        icon_image = self.draw_icon(icon, color, icon_size)
+        image.alpha_composite(
+            icon_image, (margin_left, round(image.height / 2.0 + 5))
+        )
+
+        if not mini:
+            font = ImageFont.truetype(UBUNTU_FONT, 18)
+            text = "\n".join(textwrap.wrap(title, width=12, placeholder="…"))
+            draw.text(
+                (margin_left, image.height / 2.0 - margin_bottom),
+                text=text,
+                font=font,
+                anchor="ld",
+                fill=color,
+            )
+
+        meter_middle = image.height / 4.0 * 3.0
+        meter_left = margin_left + icon_size + margin_left
+        meter_right = image.width - margin_right - 1
+
+        if mini:
+            text = textwrap.shorten(title, width=12, placeholder="…")
+            label_x = meter_left
+            anchor = "ld"
+        else:
+            text = f"{round(100*value):3d}%"
+            label_x = meter_right
+            anchor = "rd"
+
+        font = ImageFont.truetype(UBUNTU_FONT, 14)
+        draw.text(
+            (label_x, meter_middle - margin_bottom),
+            text=text,
+            font=font,
+            anchor=anchor,
+            fill=color,
+        )
+
+        bar_top = meter_middle + margin_top
+        bar_bottom = bar_top + 5
+
+        draw.rounded_rectangle(
+            (
+                meter_left,
+                bar_top,
+                round(value * (meter_right - meter_left) + meter_left),
+                bar_bottom,
+            ),
+            radius=3,
+            fill=color,
+        )
+
+        draw.rounded_rectangle(
+            (meter_left, bar_top, meter_right, bar_bottom),
+            radius=3,
+            fill=None,
+            outline=color,
+        )
+
+        return image
+
     async def render_lcd(self, tile_changed: int | None = None) -> None:
         """
         Render the LCD display.
@@ -288,6 +464,11 @@ class DeckController:
             self.status_inhibited = time.time() + 1
 
         status_bar: bool = time.time() > self.status_inhibited
+
+        for index, dial in self.dials.items():
+            mini = status_bar and index in (1, 2)
+            tile = await dial.render(mini=mini)
+            image.alpha_composite(tile, (index * 220, 0))
 
         if status_bar:
             time_image = draw_time()
@@ -310,6 +491,70 @@ class DeckController:
             next_second = math.ceil(time.time())
             await self.render_lcd()
             await asyncio.sleep(max(0, next_second - time.time()))
+
+    def set_brightness(self, value: int) -> None:
+        """
+        Set and store Stream Deck brightness.
+        """
+        self.deck.brightness = min(max(value, 0), 100)
+        self.deck.set_brightness(self.deck.brightness)
+
+
+@define
+class BrightnessDial:
+    """
+    A dial for controlling the Stream Deck backlight brightness.
+    """
+
+    dial: int
+    controller: DeckController | None = field(init=False, default=None)
+    deck: StreamDeck = field(init=False)
+
+    async def start(self, deck: StreamDeck) -> None:
+        """
+        Start the dial.
+        """
+        self.deck = deck
+
+    async def stop(self) -> None:
+        """
+        Stop the dial.
+        """
+        self.deck = None
+
+        if self.controller is not None:
+            await self.controller.render_lcd(tile_changed=self.dial)
+
+    async def render(self, mini: bool = False) -> Image.Image:
+        """
+        Render the portion of the LCD display (tile) for this dial.
+        """
+        if not self.deck or self.controller is None:
+            return Image.new("RGBA", (140, 100), "#00000000")
+
+        image = self.controller.draw_dial_tile(
+            title="Stream Deck",
+            icon="brightness-percent",
+            value=self.deck.brightness / 100.0,
+            mini=mini,
+        )
+        return image
+
+    async def on_dial_push(self, dial_state: bool) -> None:
+        """
+        Called when the dial got pressed or released.
+        """
+
+    async def on_dial_turn(self, value: int) -> None:
+        """
+        Called when the dial got turned.
+        """
+        if not self.controller:
+            return
+
+        change = round(value / abs(value) * (1.6 ** abs(value) - 1))
+        self.controller.set_brightness(self.deck.brightness + change)
+        await self.controller.render_lcd(tile_changed=self.dial)
 
 
 def svg_icon(

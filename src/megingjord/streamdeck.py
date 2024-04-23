@@ -6,7 +6,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import textwrap
+import time
 from datetime import datetime
 from io import BytesIO
 from pathlib import Path
@@ -18,8 +20,7 @@ from cairosvg import svg2png
 from PIL import Image, ImageDraw, ImageFont
 from StreamDeck.DeviceManager import DeviceManager
 from StreamDeck.Devices.StreamDeck import StreamDeck
-from StreamDeck.ImageHelpers.PILHelper import (create_touchscreen_image,
-                                               to_native_touchscreen_format)
+from StreamDeck.ImageHelpers.PILHelper import _to_native_format
 from StreamDeck.Transport.Transport import TransportError
 from svgelements import SVG, Color, Matrix, Rect, Text
 
@@ -43,7 +44,7 @@ class Key(Protocol):
     def __init__(self, key: int) -> None:
         ...
 
-    async def start(self) -> None:
+    async def start(self, deck: StreamDeck) -> None:
         """
         Start the key.
         """
@@ -71,6 +72,9 @@ class DeckController:
     done: asyncio.Event = field(init=False, factory=asyncio.Event)
     keys: dict[int, Key] = field(init=False, factory=dict)
 
+    # Status bar inhibited until this time
+    status_inhibited: float = field(init=False, default=0)
+
     def register_key(self, key: Key) -> None:
         """
         Register a key.
@@ -85,16 +89,21 @@ class DeckController:
         key.controller = None
         del self.keys[key.key]
 
-    async def on_key_change(self, deck, key, key_state):
+    async def on_key_change(
+        self, deck: StreamDeck, key: int, key_state: bool
+    ) -> None:
         """
         Called when the key got pressed or released.
         """
         if deck != self.deck or key not in self.keys:
             return
 
-        await self.keys[key].on_key_change(key_state)
+        try:
+            await self.keys[key].on_key_change(key_state)
+        except Exception:  # pylint: disable=W0718
+            logger.error("Failed to process key change", exc_info=True)
 
-    async def listen(self):
+    async def listen(self) -> None:
         """
         Find a Stream Deck, open and initialize.
         """
@@ -111,6 +120,7 @@ class DeckController:
         logger.info("Opened Stream Deck")
 
         deck.reset()
+        deck.set_key_image(0, None)  # Resets the LCD display :/
 
         deck.set_key_callback_async(self.on_key_change)
 
@@ -192,7 +202,7 @@ class DeckController:
 
         if secondary_icon:
             tile.append(
-                draw_icon(
+                svg_icon(
                     path=self.icon_path / f"{secondary_icon}.svg",
                     color=color_triad[1],
                     size=50,
@@ -210,7 +220,7 @@ class DeckController:
                 pos_x, pos_y = 20, 20
 
             tile.append(
-                draw_icon(
+                svg_icon(
                     path=self.icon_path / f"{primary_icon}.svg",
                     color=color_triad[2],
                     size=size,
@@ -259,18 +269,51 @@ class DeckController:
             image.save(jpg, format="JPEG", quality=95)
             return jpg.getvalue()
 
-    async def clock_on_lcd(self):
+    def draw_icon(self, icon_name: str, color: str, size: int) -> Image.Image:
+        """
+        Draw an SVG icon into a PIL Image.
+        """
+        svg = svg_icon(
+            self.icon_path / f"{icon_name}.svg", color=color, size=size
+        )
+        return svg_to_image(svg, width=size, height=size)
+
+    async def render_lcd(self, tile_changed: int | None = None) -> None:
+        """
+        Render the LCD display.
+        """
+        image = Image.new("RGBA", (800, 100), "#000000ff")
+
+        if tile_changed in (1, 2):
+            self.status_inhibited = time.time() + 1
+
+        status_bar: bool = time.time() > self.status_inhibited
+
+        if status_bar:
+            time_image = draw_time()
+            image.alpha_composite(
+                time_image,
+                (round(image.width / 2.0 - time_image.width / 2.0), 0),
+            )
+
+        image = image.convert("RGB")
+
+        jpg = to_native_touchscreen_tile_format(self.deck, image)
+
+        self.deck.set_touchscreen_image(jpg, 0, 0, 800, 100)
+
+    async def clock_on_lcd(self) -> None:
         """
         Keep writing the time on the LCD display.
         """
         while True:
-            jpg = draw_time(self.deck)
-            self.deck.set_touchscreen_image(jpg, 0, 0, 800, 100)
-            await asyncio.sleep(0.10)
+            next_second = math.ceil(time.time())
+            await self.render_lcd()
+            await asyncio.sleep(max(0, next_second - time.time()))
 
 
-def draw_icon(
-    path: Path, color: str, size: int, pos_x: int, pos_y: int
+def svg_icon(
+    path: Path, color: str, size: int, pos_x: int = 0, pos_y: int = 0
 ) -> SVG:
     """
     Draw an icon.
@@ -280,33 +323,98 @@ def draw_icon(
     """
     icon = SVG.parse(path, reify=False, width=size, height=size)
     next(iter(icon)).fill = Color(color)
-    return icon * Matrix(f"translate({pos_x}, {pos_y})")
+
+    if pos_x or pos_y:
+        icon = icon * Matrix(f"translate({pos_x}, {pos_y})")
+
+    return icon
 
 
-def draw_time(deck):
+def svg_to_image(svg: SVG, width: int, height: int) -> Image.Image:
     """
-    Draw time on LCD display.
+    Convert an SVG to a PIL Image.
     """
-    image = create_touchscreen_image(deck)
+    png = BytesIO(
+        svg2png(
+            bytestring=svg.string_xml().encode("utf-8"),
+            output_width=width,
+            output_height=height,
+        )
+    )
+
+    return Image.open(png)
+
+
+def create_touchscreen_tile_image(_deck: StreamDeck) -> Image.Image:
+    """
+    Create a PIL image for a "tile" of the LCD display.
+
+    A tile is a section of the LCD that corresponds with a encoder dial below
+    it, as on the Stream Deck +. The reasonable area that can be used for each
+    tile is 140x100, horizontally centered on the dial. With an empty space of
+    80 pixels wide between tiles, that makes 140*4 + 80*3 = 800.
+
+    """
+    return Image.new("RGB", (140, 100), "black")
+
+
+def to_native_touchscreen_tile_format(
+    deck: StreamDeck, image: Image.Image
+) -> bytes:
+    """
+    Converts a given PIL image to a tile of the native touchscreen format.
+    """
+    fmt = deck.touchscreen_image_format()
+    fmt["size"] = (image.width, image.height)
+    return bytes(_to_native_format(image, fmt))
+
+
+def set_touchscreen_tile_image(
+    deck: StreamDeck, image: bytes, tile: int = 0
+) -> None:
+    """
+    Write the tile to part of the touch screen.
+
+    The C{image} is expected to be a JPG bytes object representing a 140x100
+    tile of the touchscreen.
+    """
+    deck.set_touchscreen_image(image, 220 * tile, 0, 140, 100)
+
+
+def draw_time() -> Image.Image:
+    """
+    Draw time as a PIL Image.
+    """
+    image = Image.new(
+        "RGBA",
+        (440, 50),
+    )
+
     draw = ImageDraw.Draw(image)
 
+    draw.rounded_rectangle(
+        (0, -1, image.width - 1, 49),
+        radius=16,
+        fill="#660000c0",
+        outline="#990000c0",
+        width=1,
+        corners=(False, False, True, True),
+    )
+
     dt = datetime.now()
-    date_str = f"{dt:%A} {dt.day} {dt:%B} {dt.year}"
+    date_str = f"{dt:%A} {dt.day} {dt:%b}"
     time_str = f"{dt:%H}:{dt:%M}:{dt:%S}"
 
-    middle = deck.TOUCHSCREEN_PIXEL_WIDTH / 2.0
-    font = ImageFont.truetype(
-        UBUNTU_FONT, 0.18 * deck.TOUCHSCREEN_PIXEL_HEIGHT
-    )
-    draw.text((middle, 2), text=date_str, font=font, anchor="ma", fill="white")
+    font = ImageFont.truetype(UBUNTU_FONT, 22)
+    draw.text((110, 24), text=date_str, font=font, anchor="mm", fill="white")
 
-    font = ImageFont.truetype(UBUNTU_FONT, 64)
+    font = ImageFont.truetype(UBUNTU_FONT, 40)
     draw.text(
-        (middle, deck.TOUCHSCREEN_PIXEL_HEIGHT - 2),
+        (330, 24),
         text=time_str,
         font=font,
-        anchor="md",
+        anchor="mm",
         fill="white",
     )
 
-    return to_native_touchscreen_format(deck, image)
+    return image

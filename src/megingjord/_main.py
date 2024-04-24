@@ -8,7 +8,6 @@ import asyncio
 import logging
 import sys
 from contextlib import suppress
-from pathlib import Path
 from typing import AsyncGenerator, Callable
 
 from aiohttp import web
@@ -26,7 +25,6 @@ class Megingjord:
     """
 
     setup: Callable[[web.Application], None]
-    icon_path: Path
     app: web.Application = field(factory=web.Application)
 
     async def run_background_tasks(
@@ -48,9 +46,7 @@ class Megingjord:
         """
         Start Megingjord.
         """
-        self.app["deck_controller"] = DeckController(
-            self.app, icon_path=self.icon_path
-        )
+        self.app["deck_controller"] = DeckController(self.app)
 
         self.app.cleanup_ctx.append(self.run_background_tasks)
 
@@ -61,7 +57,10 @@ class Megingjord:
         return self.app.get("cleanup_exception")
 
 
-def main(icon_path: Path, setup: Callable, level=logging.INFO) -> None:
+def main(
+    setup: Callable[[web.Application], None],
+    level: int = logging.INFO,
+) -> None:
     """
     Main entry.
     """
@@ -72,7 +71,7 @@ def main(icon_path: Path, setup: Callable, level=logging.INFO) -> None:
     )
 
     try:
-        megingjord = Megingjord(setup=setup, icon_path=icon_path)
+        megingjord = Megingjord(setup=setup)
         logger.debug(megingjord)
         exc = megingjord.start()
         if exc:

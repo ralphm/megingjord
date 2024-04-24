@@ -340,7 +340,7 @@ class PulseDefaultSinkKey:
             primary_icon = "help-rhombus-outline"
             secondary_icon = None
 
-        tile = self.controller.draw_tile(
+        tile = await self.controller.draw_tile(
             self.get_device_name(card, port),
             "#336699",
             primary_icon,

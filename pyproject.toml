@@ -33,6 +33,8 @@ dependencies = [
     "aiohue",
     "CairoSVG",
     "svgelements",
+    "xdg_base_dirs",
+    "async_lru",
 ]
 [project.optional-dependencies]
 tests = [

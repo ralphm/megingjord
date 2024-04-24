@@ -183,7 +183,7 @@ class HueLightToggleKey:
             color = "#330000"
 
         logger.debug(f"Setting key {self.key} to icon {icon}: {text!r}")
-        tile = self.controller.draw_tile(text, color, icon)
+        tile = await self.controller.draw_tile(text, color, icon)
 
         self.deck.set_key_image(self.key, tile)
 

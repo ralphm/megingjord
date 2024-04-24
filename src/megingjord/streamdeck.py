@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Protocol
 
 from aiohttp import web
+from async_lru import alru_cache
 from attrs import define, field
 from cairosvg import svg2png
 from PIL import Image, ImageDraw, ImageFont
@@ -25,6 +26,7 @@ from StreamDeck.Transport.Transport import TransportError
 from svgelements import SVG, Color, Matrix, Rect, Text
 
 from .color_utils import black_or_white, make_triad
+from .icon import get_icon
 
 logger = logging.getLogger(__name__)
 
@@ -115,7 +117,6 @@ class DeckController:
     """
 
     app: web.Application
-    icon_path: Path
     deck: StreamDeck = field(init=False, default=None)
     done: asyncio.Event = field(init=False, factory=asyncio.Event)
     keys: dict[int, Key] = field(init=False, factory=dict)
@@ -270,7 +271,7 @@ class DeckController:
         self.deck.close()
         await asyncio.sleep(0.5)
 
-    def draw_tile(  # pylint: disable=R0913
+    async def draw_tile(  # pylint: disable=R0913
         self,
         title: str,
         background_color: str,
@@ -298,8 +299,8 @@ class DeckController:
 
         if secondary_icon:
             tile.append(
-                svg_icon(
-                    path=self.icon_path / f"{secondary_icon}.svg",
+                await svg_icon(
+                    icon=secondary_icon,
                     color=color_triad[1],
                     size=50,
                     pos_x=10,
@@ -316,8 +317,8 @@ class DeckController:
                 pos_x, pos_y = 20, 20
 
             tile.append(
-                svg_icon(
-                    path=self.icon_path / f"{primary_icon}.svg",
+                await svg_icon(
+                    icon=primary_icon,
                     color=color_triad[2],
                     size=size,
                     pos_x=pos_x,
@@ -365,16 +366,16 @@ class DeckController:
             image.save(jpg, format="JPEG", quality=95)
             return jpg.getvalue()
 
-    def draw_icon(self, icon_name: str, color: str, size: int) -> Image.Image:
+    async def draw_icon(
+        self, icon: str, color: str, size: int
+    ) -> Image.Image:
         """
         Draw an SVG icon into a PIL Image.
         """
-        svg = svg_icon(
-            self.icon_path / f"{icon_name}.svg", color=color, size=size
-        )
+        svg = await svg_icon(icon=icon, color=color, size=size)
         return svg_to_image(svg, width=size, height=size)
 
-    def draw_dial_tile(  # pylint: disable=R0913,R0914
+    async def draw_dial_tile(  # pylint: disable=R0913,R0914
         self,
         title: str,
         icon: str,
@@ -393,7 +394,7 @@ class DeckController:
         margin_top = margin_bottom = 2
         icon_size = 40
 
-        icon_image = self.draw_icon(icon, color, icon_size)
+        icon_image = await self.draw_icon(icon, color, icon_size)
         image.alpha_composite(
             icon_image, (margin_left, round(image.height / 2.0 + 5))
         )
@@ -532,7 +533,7 @@ class BrightnessDial:
         if not self.deck or self.controller is None:
             return Image.new("RGBA", (140, 100), "#00000000")
 
-        image = self.controller.draw_dial_tile(
+        image = await self.controller.draw_dial_tile(
             title="Stream Deck",
             icon="brightness-percent",
             value=self.deck.brightness / 100.0,
@@ -557,8 +558,9 @@ class BrightnessDial:
         await self.controller.render_lcd(tile_changed=self.dial)
 
 
-def svg_icon(
-    path: Path, color: str, size: int, pos_x: int = 0, pos_y: int = 0
+@alru_cache(maxsize=128)
+async def svg_icon(
+    icon: str, color: str, size: int, pos_x: int = 0, pos_y: int = 0
 ) -> SVG:
     """
     Draw an icon.
@@ -566,13 +568,13 @@ def svg_icon(
     This reads the icon from disk, applies the given color, and applies a
     matrix to scale and position with the given size and coordinates.
     """
-    icon = SVG.parse(path, reify=False, width=size, height=size)
-    next(iter(icon)).fill = Color(color)
+    svg = await get_icon(icon=icon, size=size)
+    next(iter(svg)).fill = Color(color)
 
     if pos_x or pos_y:
-        icon = icon * Matrix(f"translate({pos_x}, {pos_y})")
+        svg = svg * Matrix(f"translate({pos_x}, {pos_y})")
 
-    return icon
+    return svg
 
 
 def svg_to_image(svg: SVG, width: int, height: int) -> Image.Image:

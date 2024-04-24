@@ -6,12 +6,17 @@ import asyncio
 import logging
 import pprint
 from contextlib import suppress
-from typing import Any, AsyncGenerator, AsyncIterator
+from typing import Any, AsyncIterator
 
 from aiohttp import web
 from attrs import define, field
-from pulsectl import (PulseCardInfo, PulseCardPortInfo, PulseDisconnected,
-                      PulseEventInfo, PulseSinkInfo)
+from pulsectl import (
+    PulseCardInfo,
+    PulseCardPortInfo,
+    PulseDisconnected,
+    PulseEventInfo,
+    PulseSinkInfo,
+)
 from pulsectl_asyncio import PulseAsync
 from StreamDeck.Devices.StreamDeck import StreamDeck
 
@@ -47,7 +52,7 @@ class PulseAudioCoordinator:
         init=False, factory=dict
     )
 
-    def __attrs_post_init__(self):
+    def __attrs_post_init__(self) -> None:
         self.app.cleanup_ctx.append(self.start)
 
     async def get_pulse(self) -> PulseAsync:
@@ -94,7 +99,7 @@ class PulseAudioCoordinator:
             for queue in self.subscribers.values():
                 await queue.put(None)
 
-    async def start(self, _app: web.Application) -> AsyncGenerator:
+    async def start(self, _app: web.Application) -> AsyncIterator[None]:
         """
         Start the coordinator.
 
@@ -197,7 +202,10 @@ class PulseAudioCoordinator:
         pulse = await self.get_pulse()
         cards = await pulse.card_list()
 
-        def check_resource(matcher, resource):
+        def check_resource(
+            matcher: dict[str, Any],
+            resource: PulseCardInfo | PulseCardPortInfo,
+        ) -> bool:
             if "name" in matcher:
                 if resource.name != matcher["name"]:
                     return False
@@ -208,7 +216,8 @@ class PulseAudioCoordinator:
                     return False
             return True
 
-        def check_rule(rule, card, port):
+        def check_rule(rule: dict[str, Any], card: PulseCardInfo, port:
+                       PulseCardPortInfo) -> bool:
             return check_resource(
                 rule.get("card", {}), card
             ) and check_resource(rule.get("port", {}), port)
@@ -282,7 +291,7 @@ class PulseDefaultSinkKey:
     deck: StreamDeck = field(init=False)
     current_sink_name: str | None = field(init=False, default=None)
 
-    async def start(self, deck: StreamDeck):
+    async def start(self, deck: StreamDeck) -> None:
         """
         Start this key.
         """
@@ -290,13 +299,13 @@ class PulseDefaultSinkKey:
         async for sink_name in self.pulse.listen_default_sink():
             await self.on_sink(sink_name)
 
-    async def stop(self):
+    async def stop(self) -> None:
         """
         Stop this key.
         """
         self.deck.set_key_image(self.key, None)
 
-    async def on_key_change(self, key_state):
+    async def on_key_change(self, key_state: bool) -> None:
         """
         The Stream Deck key was pressed or released.
         """
@@ -317,10 +326,13 @@ class PulseDefaultSinkKey:
         except Exception:  # pylint: disable=W0718
             logger.error("Failed to set default sink", exc_info=True)
 
-    async def on_sink(self, sink_name):
+    async def on_sink(self, sink_name: str) -> None:
         """
         The PulseAudio default sink changed.
         """
+        if not self.pulse.pulse or not self.controller:
+            return
+
         try:
             self.current_sink_name = sink_name
             new_sink = await self.pulse.pulse.get_sink_by_name(sink_name)
@@ -365,7 +377,7 @@ class PulseDefaultSinkKey:
         """
         Get the name for a Pulse Audio port.
         """
-        return port.description
+        return str(port.description)
 
     def get_device_name(
         self, card: PulseCardInfo, port: PulseCardPortInfo
@@ -373,7 +385,7 @@ class PulseDefaultSinkKey:
         """
         Get the name for a Pulse Audio port.
         """
-        return port.proplist.get(
+        return str(port.proplist.get(
             "device.product.name",
             card.proplist.get("device.description", "Output"),
-        )
+        ))

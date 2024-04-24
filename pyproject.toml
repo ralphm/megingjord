@@ -76,8 +76,12 @@ no-cov = "cov --no-cov {args}"
 [[tool.hatch.envs.test.matrix]]
 python = ["310", "311"]
 
+[tool.mypy]
+strict = true
+untyped_calls_exclude="PIL"
+
 [[tool.mypy.overrides]]
-module = "StreamDeck.*,aiohue,svgelements,cairosvg,pulsectl,pulsectl_asyncio,aiohue.*,PIL"
+module = "StreamDeck.*,aiohue,svgelements,cairosvg,pulsectl,pulsectl_asyncio,aiohue.*"
 ignore_missing_imports = true
 
 [tool.coverage.run]

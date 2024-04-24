@@ -8,7 +8,7 @@ import asyncio
 import logging
 import sys
 from contextlib import suppress
-from typing import AsyncGenerator, Callable
+from typing import AsyncIterator, Callable
 
 from aiohttp import web
 from attrs import define, field
@@ -29,7 +29,7 @@ class Megingjord:
 
     async def run_background_tasks(
         self, app: web.Application
-    ) -> AsyncGenerator:
+    ) -> AsyncIterator[None]:
         """
         Run background tasks.
         """
@@ -42,7 +42,7 @@ class Megingjord:
         with suppress(asyncio.CancelledError):
             await task
 
-    def start(self):
+    def start(self) -> None:
         """
         Start Megingjord.
         """
@@ -53,8 +53,6 @@ class Megingjord:
         self.setup(self.app)
 
         web.run_app(self.app, shutdown_timeout=0)
-
-        return self.app.get("cleanup_exception")
 
 
 def main(
@@ -73,9 +71,7 @@ def main(
     try:
         megingjord = Megingjord(setup=setup)
         logger.debug(megingjord)
-        exc = megingjord.start()
-        if exc:
-            raise exc
+        megingjord.start()
         logger.info("Exiting normally.")
         sys.exit(0)
     except Exception as exc:  # pylint: disable=W0718

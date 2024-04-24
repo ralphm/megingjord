@@ -20,7 +20,7 @@ def hex_to_rgb(hex_str: str) -> tuple[int, ...]:
     )
 
 
-def rgb_to_hex(rgb):
+def rgb_to_hex(rgb: tuple[int, ...]) -> str:
     """
     Convert an RGB tuple to hex string.
 
@@ -30,17 +30,22 @@ def rgb_to_hex(rgb):
     return "#" + "".join([f"{c:02X}" for c in rgb])
 
 
-def scale_rgb_tuple(rgb, down=True):
-    """Scales an RGB tuple up or down to/from values between 0 and 1.
+def scale_rgb_down(rgb: tuple[int, ...]) -> tuple[float, ...]:
+    """Scales an RGB tuple down to values between 0 and 1.
 
     >>> scale_rgb_tuple((204, 0, 0))
     (.80, 0, 0)
+    """
+    return tuple((round(float(c) / 255, 2) for c in rgb))
+
+
+def scale_rgb_up(rgb: tuple[float, ...]) -> tuple[int, ...]:
+    """Scales an RGB tuple up or down to/from values between 0 and 1.
+
     >>> scale_rgb_tuple((.80, 0, 0), False)
     (204, 0, 0)
     """
-    if not down:
-        return tuple((max(0, min(255, int(c * 255))) for c in rgb))
-    return tuple((round(float(c) / 255, 2) for c in rgb))
+    return tuple((max(0, min(255, int(c * 255))) for c in rgb))
 
 
 def is_dark(r: float, g: float, b: float) -> bool:
@@ -51,7 +56,7 @@ def is_dark(r: float, g: float, b: float) -> bool:
     return luminance < 0.52
 
 
-def make_triad(hex_str):
+def make_triad(hex_str: str) -> list[str]:
     """
     Create a triad of colors from a single (background) color.
 
@@ -67,7 +72,7 @@ def make_triad(hex_str):
 
     colors = [hex_str]
     orig_rgb = hex_to_rgb(hex_str)
-    rgb = scale_rgb_tuple(orig_rgb)
+    rgb = scale_rgb_down(orig_rgb)
     hue, sat, val = colorsys.rgb_to_hsv(*rgb)
 
     if is_dark(*rgb):
@@ -75,7 +80,7 @@ def make_triad(hex_str):
     else:
         second = (hue, 0.1, 0.4)
     colors.append(
-        rgb_to_hex(scale_rgb_tuple(colorsys.hsv_to_rgb(*second), False))
+        rgb_to_hex(scale_rgb_up(colorsys.hsv_to_rgb(*second)))
     )
 
     if is_dark(*rgb):
@@ -83,7 +88,7 @@ def make_triad(hex_str):
     else:
         third = (hue, 0.1, 0.1)
     colors.append(
-        rgb_to_hex(scale_rgb_tuple(colorsys.hsv_to_rgb(*third), False))
+        rgb_to_hex(scale_rgb_up(colorsys.hsv_to_rgb(*third)))
     )
 
     return colors
@@ -94,7 +99,7 @@ def black_or_white(hex_str: str) -> str:
     Return contrasting black or white, depending on the input color.
     """
     orig_rgb = hex_to_rgb(hex_str)
-    rgb = scale_rgb_tuple(orig_rgb)
+    rgb = scale_rgb_down(orig_rgb)
     if is_dark(*rgb):
         return "#FFFFFF"
     return "#000000"

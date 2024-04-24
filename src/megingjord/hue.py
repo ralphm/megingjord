@@ -4,7 +4,7 @@ Philips Hue support.
 
 import asyncio
 import logging
-from typing import AsyncGenerator, Callable
+from typing import Any, AsyncIterator, Callable
 
 from aiohttp import web
 from aiohue import HueBridgeV2
@@ -13,7 +13,7 @@ from aiohue.v2.models.light import Light
 from attrs import define, field
 from StreamDeck.Devices.StreamDeck import StreamDeck
 
-from .color_utils import rgb_to_hex, scale_rgb_tuple, xyb_to_rgb
+from .color_utils import rgb_to_hex, scale_rgb_up, xyb_to_rgb
 from .streamdeck import DeckController
 
 logger = logging.getLogger(__name__)
@@ -34,7 +34,7 @@ class HueCoordinator:
     bridge: HueBridgeV2 | None = field(init=False, default=None)
     done: asyncio.Event = field(init=False, factory=asyncio.Event)
 
-    def __attrs_post_init__(self):
+    def __attrs_post_init__(self) -> None:
         self.app.cleanup_ctx.append(self.start)
 
     async def get_bridge(self) -> HueBridgeV2:
@@ -49,7 +49,7 @@ class HueCoordinator:
 
         return self.bridge
 
-    async def start(self, _app: web.Application) -> AsyncGenerator:
+    async def start(self, _app: web.Application) -> AsyncIterator[None]:
         """
         Start the coordinator.
         """
@@ -72,7 +72,7 @@ class HueLightToggleKey:
 
     controller: DeckController | None = field(init=False)
     deck: StreamDeck = field(init=False)
-    unsubscribes: list[Callable] = field(init=False, factory=list)
+    unsubscribes: list[Callable[[], None]] = field(init=False, factory=list)
 
     async def start(self, deck: StreamDeck) -> None:
         """
@@ -104,7 +104,7 @@ class HueLightToggleKey:
             unsubscribe()
 
     async def on_hue_connected(
-        self, _event_type: EventType, _event: dict | None = None
+        self, _event_type: EventType, _event: dict[str, Any] | None = None
     ) -> None:
         """
         The Hue bridge was connected.
@@ -112,7 +112,7 @@ class HueLightToggleKey:
         await self.set_tile_to_light(light_id=self.light_id)
 
     async def on_hue_disconnected(
-        self, _event_type: EventType, _event: dict | None = None
+        self, _event_type: EventType, _event: dict[str, Any] | None = None
     ) -> None:
         """
         The Hue bridge was disconnected.
@@ -168,7 +168,7 @@ class HueLightToggleKey:
                         x, y = light.color.xy.x, light.color.xy.y
                         brightness = light.brightness / 100.0
                         rgb = xyb_to_rgb(x, y, brightness)
-                        scaled_rgb = scale_rgb_tuple(rgb, down=False)
+                        scaled_rgb = scale_rgb_up(rgb)
                         color = rgb_to_hex(scaled_rgb)
                         logger.debug(f"  color: {rgb} {scaled_rgb} {color}")
                     else:
@@ -187,7 +187,7 @@ class HueLightToggleKey:
 
         self.deck.set_key_image(self.key, tile)
 
-    async def on_hue_light(self, _: EventType, light=None) -> None:
+    async def on_hue_light(self, _: EventType, light: Light = None) -> None:
         """
         A Hue event was received.
         """

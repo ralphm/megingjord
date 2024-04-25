@@ -82,7 +82,9 @@ class PulseAudioCoordinator:
                 logger.info("Subscribing to events")
 
                 try:
-                    async for event in pulse.subscribe_events("all"):
+                    async for event in pulse.subscribe_events(
+                        "server", "card"
+                    ):
                         logger.debug(f"Yielding {event!r}")
                         for queue in self.subscribers.values():
                             await queue.put(event)
@@ -149,7 +151,11 @@ class PulseAudioCoordinator:
 
         sinks = await pulse.sink_list()
         for sink in sinks:
-            if sink.card == card.index and sink.port_active.name == port.name:
+            if (
+                sink.card == card.index
+                and sink.port_active
+                and sink.port_active.name == port.name
+            ):
                 return sink
 
         return None
@@ -168,7 +174,7 @@ class PulseAudioCoordinator:
             # We probably need to switch profiles
             original_profile = card.profile_active
             for profile_name in sorted(
-                port.profile_list, key=lambda profile: profile.priority
+                card.profile_list, key=lambda profile: profile.priority
             ):
                 if profile_name == original_profile:
                     continue  # Already tried above

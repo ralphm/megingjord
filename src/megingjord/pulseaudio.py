@@ -222,8 +222,9 @@ class PulseAudioCoordinator:
                     return False
             return True
 
-        def check_rule(rule: dict[str, Any], card: PulseCardInfo, port:
-                       PulseCardPortInfo) -> bool:
+        def check_rule(
+            rule: dict[str, Any], card: PulseCardInfo, port: PulseCardPortInfo
+        ) -> bool:
             return check_resource(
                 rule.get("card", {}), card
             ) and check_resource(rule.get("port", {}), port)
@@ -391,7 +392,9 @@ class PulseDefaultSinkKey:
         """
         Get the name for a Pulse Audio port.
         """
-        return str(port.proplist.get(
-            "device.product.name",
-            card.proplist.get("device.description", "Output"),
-        ))
+        return str(
+            port.proplist.get(
+                "device.product.name",
+                card.proplist.get("device.description", "Output"),
+            )
+        )

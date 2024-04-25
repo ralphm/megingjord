@@ -79,17 +79,13 @@ def make_triad(hex_str: str) -> list[str]:
         second = (hue, min(1, sat * 0.6), max(0.05, min(1, val * 1.4)))
     else:
         second = (hue, 0.1, 0.4)
-    colors.append(
-        rgb_to_hex(scale_rgb_up(colorsys.hsv_to_rgb(*second)))
-    )
+    colors.append(rgb_to_hex(scale_rgb_up(colorsys.hsv_to_rgb(*second))))
 
     if is_dark(*rgb):
         third = (hue, min(1, sat * 0.35), max(0.1, min(1, val * 1.8)))
     else:
         third = (hue, 0.1, 0.1)
-    colors.append(
-        rgb_to_hex(scale_rgb_up(colorsys.hsv_to_rgb(*third)))
-    )
+    colors.append(rgb_to_hex(scale_rgb_up(colorsys.hsv_to_rgb(*third))))
 
     return colors
 

@@ -366,9 +366,7 @@ class DeckController:
             image.save(jpg, format="JPEG", quality=95)
             return jpg.getvalue()
 
-    async def draw_icon(
-        self, icon: str, color: str, size: int
-    ) -> Image.Image:
+    async def draw_icon(self, icon: str, color: str, size: int) -> Image.Image:
         """
         Draw an SVG icon into a PIL Image.
         """

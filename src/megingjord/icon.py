@@ -3,8 +3,8 @@ SVG Icon utilities.
 """
 
 import logging
-from pathlib import Path
 import re
+from pathlib import Path
 
 import aiohttp
 from svgelements import SVG

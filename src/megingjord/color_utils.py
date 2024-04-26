@@ -67,10 +67,11 @@ def make_triad(hex_str: str) -> list[str]:
     >> make_triad('#336699')
     ['#336699', '#5586B7', '#C3E1FF']
     """
+    colors = [hex_str]
+
     if hex_str.startswith("#"):
         hex_str = hex_str[1:]
 
-    colors = [hex_str]
     orig_rgb = hex_to_rgb(hex_str)
     rgb = scale_rgb_down(orig_rgb)
     hue, sat, val = colorsys.rgb_to_hsv(*rgb)
@@ -123,3 +124,117 @@ def xyb_to_rgb(
     b: float = X * 0.051713 - Y * 0.121364 + Z * 1.011530
 
     return (r, g, b)
+
+
+COLOR_THEMES = {
+    "default": {
+        "black": "#000000",
+        "white": "#ffffff",
+        "red": "#990000",
+        "dark-red": "#330000",
+        "gray": "#666666",
+        "dark-blue": "#336699",
+        "blue": "#6699cc",
+        "light-blue": "#c0e0ff",
+        "orange": "#996633",
+        "tile-fg": "light-blue",
+        "tile-bg": "dark-blue",
+        "tile-inactive-bg": "black",
+        "icon-primary": "light-blue",
+        "icon-secondary": "blue",
+        "icon-alert": "red",
+        "icon-inactive": "blue",
+        "icon-active": "light-blue",
+        "lcd-bg": "black",
+        "status-bar-fg": "white",
+        "status-bar-bg": "dark-blue",
+        "status-bar-border": "blue",
+        "dial-title": "white",
+        "dial-icon": "white",
+        "dial-bar-label": "white",
+        "dial-bar-bg": "dark-blue",
+        "dial-bar-fill": "blue",
+    },
+    "dracula": {
+        "dracula-bg": "#282a36",
+        "dracula-current": "#44475a",
+        "dracula-selection": "dracula-current",
+        "dracula-fg": "#f8f8f2",
+        "dracula-comment": "#6272a4",
+        "dracula-cyan": "#8be9fd",
+        "dracula-green": "#50fa7b",
+        "dracula-orange": "#ffb86c",
+        "dracula-pink": "#ff79c6",
+        "dracula-purple": "#bd93f9",
+        "dracula-red": "#ff5555",
+        "dracula-yellow": "#f1fa8c",
+        "dracula-bright-cyan": "#a4ffff",
+        "dracula-bright-green": "#69ff94",
+        # dracula-bright-orange
+        "dracula-bright-pink": "#ff92df",
+        "dracula-bright-purple": "#d6acff",
+        "dracula-bright-red": "#ff6e6e",
+        "dracula-bright-yellow": "#ffffa5",
+        "dracula-bright-white": "#ffffff",
+        "dracula-bglighter": "#424450",
+        "dracula-bglight": "#343746",
+        "dracula-bgdark": "#21222c",
+        "dracula-bgdarker": "#191a21",
+        "ansi-black": "dracula-bgdark",
+        "ansi-red": "dracula-red",
+        "ansi-green": "dracula-green",
+        "ansi-yellow": "dracula-yellow",
+        "ansi-blue": "dracula-purple",
+        "ansi-magenta": "dracula-pink",
+        "ansi-cyan": "dracula-cyan",
+        "ansi-white": "dracula-fg",
+        "ansi-bright-black": "dracula-comment",
+        "ansi-bright-red": "dracula-bright-red",
+        "ansi-bright-green": "dracula-bright-green",
+        "ansi-bright-yellow": "dracula-bright-yellow",
+        "ansi-bright-blue": "dracula-bright-purple",
+        "ansi-bright-magenta": "dracula-bright-pink",
+        "ansi-bright-cyan": "dracula-bright-cyan",
+        "ansi-bright-white": "dracula-bright-white",
+        "tile-fg": "dracula-fg",
+        "tile-bg": "dracula-bg",
+        "tile-inactive-bg": "dracula-bgdarker",
+        "icon-primary": "dracula-purple",
+        "icon-secondary": "dracula-current",
+        "icon-alert": "dracula-red",
+        "icon-inactive": "dracula-current",
+        "icon-active": "dracula-purple",
+        "lcd-bg": "dracula-bgdarker",
+        "status-bar-fg": "dracula-fg",
+        "status-bar-bg": "dracula-bg",
+        "status-bar-border": "dracula-bgdark",
+        "dial-title": "dracula-fg",
+        "dial-icon": "dracula-fg",
+        "dial-bar-label": "dracula-fg",
+        "dial-bar-bg": "dracula-bg",
+        "dial-bar-fill": "dracula-purple",
+    },
+}
+
+
+def get_color(theme: dict[str, str], name: str) -> str:
+    """
+    Recursively resolve color names until we get a numeric result.
+    """
+    color = theme[name]
+    if color.startswith("#"):
+        return color
+    return get_color(theme, color)
+
+
+def get_colors(theme_name: str) -> dict[str, str]:
+    """
+    Get theme colors.
+    """
+    theme = COLOR_THEMES[theme_name]
+
+    palette: dict[str, str] = {}
+    for name in theme.keys():
+        palette[name] = get_color(theme, name)
+
+    return palette

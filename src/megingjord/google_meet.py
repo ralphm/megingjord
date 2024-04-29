@@ -23,12 +23,12 @@ logger = logging.getLogger(__name__)
 RE_MUTED_STATE = re.compile(r"^(.*)MutedState$")
 
 MUTE_ICON_COLOR = {
-    ("mic", False): ("microphone", "#666666"),
-    ("mic", True): ("microphone-off", "#990000"),
-    ("camera", False): ("video-outline", "#666666"),
-    ("camera", True): ("video-off-outline", "#990000"),
-    ("hand", False): ("hand-back-right-outline", "#336699"),
-    ("hand", True): ("hand-back-right-outline", "#666666"),
+    ("mic", False): ("microphone", "google-meet-unmuted"),
+    ("mic", True): ("microphone-off", "google-meet-muted"),
+    ("camera", False): ("video-outline", "google-meet-unmuted"),
+    ("camera", True): ("video-off-outline", "google-meet-muted"),
+    ("hand", False): ("hand-back-right-outline", "google-meet-active"),
+    ("hand", True): ("hand-back-right-outline", "google-meet-inactive"),
 }
 
 
@@ -66,7 +66,15 @@ class GoogleMeetMuteKey:
 
         icon, color = MUTE_ICON_COLOR[(self.control, muted)]
 
-        tile = await self.controller.draw_tile(self.control, color, icon)
+        tile = await self.controller.draw_tile(
+            title=self.control,
+            colors={
+                "tile-fg": "google-meet-fg",
+                "tile-bg": f"{color}-bg",
+                "icon-primary": f"{color}-icon",
+            },
+            primary_icon=icon,
+        )
         self.deck.set_key_image(self.key, tile)
 
     async def on_key_change(self, key_state: bool) -> None:
@@ -102,7 +110,12 @@ class GoogleMeetLeaveKey:
 
         if self.controller:
             tile = await self.controller.draw_tile(
-                "Leave call", "#990000", "phone-hangup"
+                title="Leave call",
+                colors={
+                    "tile-bg": "google-meet-hangup-bg",
+                    "icon-primary": "google-meet-hangup-icon",
+                },
+                primary_icon="phone-hangup",
             )
             self.deck.set_key_image(self.key, tile)
 

@@ -25,7 +25,6 @@ from StreamDeck.ImageHelpers.PILHelper import _to_native_format
 from StreamDeck.Transport.Transport import TransportError
 from svgelements import SVG, Color, Matrix, Rect, Text
 
-from .color_utils import black_or_white, make_triad
 from .icon import get_icon
 
 logger = logging.getLogger(__name__)
@@ -271,10 +270,25 @@ class DeckController:
         self.deck.close()
         await asyncio.sleep(0.5)
 
+    def get_color(
+        self, color_name: str, overrides: dict[str, str] | None = None
+    ) -> str:
+        """
+        Get color from current theme.
+        """
+        colors: dict[str, str] = self.app["colors"]
+
+        if overrides and color_name in overrides:
+            color_name = overrides[color_name]
+            if color_name.startswith("#"):
+                return color_name
+
+        return colors[color_name]
+
     async def draw_tile(  # pylint: disable=R0913
         self,
         title: str,
-        background_color: str,
+        colors: dict[str, str] | None = None,  # color overrides
         primary_icon: str | None = None,
         secondary_icon: str | None = None,
         subtitle: str | None = None,
@@ -284,24 +298,21 @@ class DeckController:
 
         If there's only a primary icon, it will be rendered large and centered.
         If there's a secondary icon, the primary icon is rendered to the lower
-        right, overlapping the smaller icon to the upper left. The colors of
-        the icons are taken from the background color.
-
-        The text is rendered at the bottom.
+        right, overlapping the smaller icon to the upper left.
         """
-
-        color_triad = make_triad(background_color)
-        text_color = black_or_white(background_color)
 
         tile = SVG(width=120, height=120)
 
-        tile.append(Rect(width=120, height=120, fill=color_triad[0]))
+        def get_color(color_name: str) -> str:
+            return self.get_color(color_name, overrides=colors)
+
+        tile.append(Rect(width=120, height=120, fill=get_color("tile-bg")))
 
         if secondary_icon:
             tile.append(
                 await svg_icon(
                     icon=secondary_icon,
-                    color=color_triad[1],
+                    color=get_color("icon-secondary"),
                     size=50,
                     pos_x=10,
                     pos_y=20,
@@ -319,7 +330,7 @@ class DeckController:
             tile.append(
                 await svg_icon(
                     icon=primary_icon,
-                    color=color_triad[2],
+                    color=get_color("icon-primary"),
                     size=size,
                     pos_x=pos_x,
                     pos_y=pos_y,
@@ -336,7 +347,7 @@ class DeckController:
                 font_size=16,
                 text_anchor="middle",
                 font_family="sans",
-                fill=text_color,
+                fill=get_color("tile-fg"),
             )
         )
 
@@ -349,7 +360,7 @@ class DeckController:
                     font_size=12,
                     text_anchor="middle",
                     font_family="sans",
-                    fill=text_color,
+                    fill=get_color("tile-fg"),
                 )
             )
 
@@ -378,13 +389,12 @@ class DeckController:
         title: str,
         icon: str,
         value: float,
-        color: str = "white",
         mini: bool = False,
     ) -> Image.Image:
         """
         Draw dial tile for LCD.
         """
-        image = Image.new("RGBA", (140, 100), "#000000ff")
+        image = Image.new("RGBA", (140, 100), "#00000000")
 
         draw = ImageDraw.Draw(image)
 
@@ -392,7 +402,9 @@ class DeckController:
         margin_top = margin_bottom = 2
         icon_size = 40
 
-        icon_image = await self.draw_icon(icon, color, icon_size)
+        icon_image = await self.draw_icon(
+            icon, self.get_color("dial-icon"), icon_size
+        )
         image.alpha_composite(
             icon_image, (margin_left, round(image.height / 2.0 + 5))
         )
@@ -405,7 +417,7 @@ class DeckController:
                 text=text,
                 font=font,
                 anchor="ld",
-                fill=color,
+                fill=self.get_color("dial-title"),
             )
 
         meter_middle = image.height / 4.0 * 3.0
@@ -427,28 +439,72 @@ class DeckController:
             text=text,
             font=font,
             anchor=anchor,
-            fill=color,
+            fill=self.get_color("dial-bar-label"),
         )
 
         bar_top = meter_middle + margin_top
         bar_bottom = bar_top + 5
 
         draw.rounded_rectangle(
-            (
-                meter_left,
-                bar_top,
-                round(value * (meter_right - meter_left) + meter_left),
-                bar_bottom,
-            ),
-            radius=3,
-            fill=color,
-        )
-
-        draw.rounded_rectangle(
             (meter_left, bar_top, meter_right, bar_bottom),
             radius=3,
-            fill=None,
-            outline=color,
+            fill=self.get_color("dial-bar-bg"),
+        )
+
+        if value:
+            draw.rounded_rectangle(
+                (
+                    meter_left,
+                    bar_top,
+                    round(value * (meter_right - meter_left) + meter_left),
+                    bar_bottom,
+                ),
+                radius=3,
+                fill=self.get_color("dial-bar-fill"),
+            )
+
+        return image
+
+    def draw_time(self) -> Image.Image:
+        """
+        Draw time as a PIL Image.
+        """
+        image = Image.new(
+            "RGBA",
+            (440, 50),
+        )
+
+        draw = ImageDraw.Draw(image)
+
+        draw.rounded_rectangle(
+            (0, -1, image.width - 1, 49),
+            radius=16,
+            fill=self.get_color("status-bar-bg"),
+            outline=self.get_color("status-bar-border"),
+            width=1,
+            corners=(False, False, True, True),
+        )
+
+        dt = datetime.now()
+        date_str = f"{dt:%A} {dt.day} {dt:%b}"
+        time_str = f"{dt:%H}:{dt:%M}:{dt:%S}"
+
+        font = ImageFont.truetype(UBUNTU_FONT, 22)
+        draw.text(
+            (110, 24),
+            text=date_str,
+            font=font,
+            anchor="mm",
+            fill=self.get_color("status-bar-fg"),
+        )
+
+        font = ImageFont.truetype(UBUNTU_FONT, 40)
+        draw.text(
+            (330, 24),
+            text=time_str,
+            font=font,
+            anchor="mm",
+            fill=self.get_color("status-bar-fg"),
         )
 
         return image
@@ -457,7 +513,7 @@ class DeckController:
         """
         Render the LCD display.
         """
-        image = Image.new("RGBA", (800, 100), "#000000ff")
+        image = Image.new("RGBA", (800, 100), self.get_color("lcd-bg"))
 
         if tile_changed in (1, 2):
             self.status_inhibited = time.time() + 1
@@ -470,7 +526,7 @@ class DeckController:
             image.alpha_composite(tile, (index * 220, 0))
 
         if status_bar:
-            time_image = draw_time()
+            time_image = self.draw_time()
             image.alpha_composite(
                 time_image,
                 (round(image.width / 2.0 - time_image.width / 2.0), 0),
@@ -624,42 +680,3 @@ def set_touchscreen_tile_image(
     tile of the touchscreen.
     """
     deck.set_touchscreen_image(image, 220 * tile, 0, 140, 100)
-
-
-def draw_time() -> Image.Image:
-    """
-    Draw time as a PIL Image.
-    """
-    image = Image.new(
-        "RGBA",
-        (440, 50),
-    )
-
-    draw = ImageDraw.Draw(image)
-
-    draw.rounded_rectangle(
-        (0, -1, image.width - 1, 49),
-        radius=16,
-        fill="#660000c0",
-        outline="#990000c0",
-        width=1,
-        corners=(False, False, True, True),
-    )
-
-    dt = datetime.now()
-    date_str = f"{dt:%A} {dt.day} {dt:%b}"
-    time_str = f"{dt:%H}:{dt:%M}:{dt:%S}"
-
-    font = ImageFont.truetype(UBUNTU_FONT, 22)
-    draw.text((110, 24), text=date_str, font=font, anchor="mm", fill="white")
-
-    font = ImageFont.truetype(UBUNTU_FONT, 40)
-    draw.text(
-        (330, 24),
-        text=time_str,
-        font=font,
-        anchor="mm",
-        fill="white",
-    )
-
-    return image

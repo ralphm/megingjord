@@ -13,7 +13,7 @@ from aiohue.v2.models.light import Light
 from attrs import define, field
 from StreamDeck.Devices.StreamDeck import StreamDeck
 
-from .color_utils import rgb_to_hex, scale_rgb_up, xyb_to_rgb
+from .color_utils import is_dark, rgb_to_hex, scale_rgb_up, xyb_to_rgb
 from .streamdeck import DeckController
 
 logger = logging.getLogger(__name__)
@@ -131,12 +131,15 @@ class HueLightToggleKey:
             bridge = await self.hue.get_bridge()
 
             light = bridge.lights[self.light_id]
-            await bridge.lights.set_state(self.light_id, on=not light.on.on)
+            on = not light.on.on
+            await bridge.lights.set_state(
+                self.light_id, on, brightness=100, transition_time=0
+            )
         except Exception:  # pylint: disable=W0718
             logger.error("Failed to set light state", exc_info=True)
             await self.set_tile_to_light(light_id=self.light_id)
 
-    async def set_tile_to_light(
+    async def set_tile_to_light(  # pylint: disable=R0914
         self, light: Light | None = None, light_id: str | None = None
     ) -> None:
         """
@@ -157,13 +160,16 @@ class HueLightToggleKey:
             if not light:
                 text = "Disconnected"
                 icon = "lightbulb-question-outline"
-                color = "#330000"
+                colors = {
+                    "icon-primary": "icon-inactive",
+                    "tile-bg": "tile-inactive-bg",
+                }
             else:
                 device = bridge.lights.get_device(self.light_id)
                 text = device.metadata.name
 
                 if light.is_on:
-                    icon = "lightbulb-outline"
+                    icon = "lightbulb"
                     if light.supports_color:
                         x, y = light.color.xy.x, light.color.xy.y
                         brightness = light.brightness / 100.0
@@ -171,20 +177,36 @@ class HueLightToggleKey:
                         scaled_rgb = scale_rgb_up(rgb)
                         color = rgb_to_hex(scaled_rgb)
                         logger.debug(f"  color: {rgb} {scaled_rgb} {color}")
+                        colors = {
+                            "icon-primary": color,
+                            "tile-bg": (
+                                "tile-inactive-bg"
+                                if is_dark(*rgb)
+                                else "tile-bg"
+                            ),
+                        }
                     else:
-                        color = "#996633"
+                        colors = {
+                            "icon-primary": "tile-fg",
+                        }
                 else:
                     icon = "lightbulb-off-outline"
-                    color = "#330000"
+                    colors = {
+                        "icon-primary": "icon-inactive",
+                        "tile-bg": "tile-inactive-bg",
+                    }
         except Exception:  # pylint: disable=W0718
             logger.error("Couldn't get light information", exc_info=True)
             text = "Error"
             icon = "lightbulb-alert-outline"
-            color = "#330000"
+            colors = {
+                "icon-primary": "icon-alert",
+                "tile-bg": "tile-inactive-bg",
+            }
 
         logger.debug(f"Setting key {self.key} to icon {icon}: {text!r}")
-        tile = await self.controller.draw_tile(text, color, icon)
 
+        tile = await self.controller.draw_tile(text, colors, icon)
         self.deck.set_key_image(self.key, tile)
 
     async def on_hue_light(self, _: EventType, light: Light = None) -> None:

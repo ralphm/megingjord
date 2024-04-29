@@ -13,6 +13,7 @@ from typing import AsyncIterator, Callable
 from aiohttp import web
 from attrs import define, field
 
+from .color_utils import get_colors
 from .streamdeck import DeckController
 
 logger = logging.getLogger(__name__)
@@ -51,6 +52,11 @@ class Megingjord:
         self.app.cleanup_ctx.append(self.run_background_tasks)
 
         self.setup(self.app)
+
+        if "color_theme" not in self.app:
+            self.app["color_theme"] = "dracula"
+
+        self.app["colors"] = get_colors(self.app["color_theme"])
 
         web.run_app(self.app, shutdown_timeout=0, port=2394)
 

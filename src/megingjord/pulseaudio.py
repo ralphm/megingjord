@@ -361,9 +361,8 @@ class PulseDefaultSinkKey:
 
         tile = await self.controller.draw_tile(
             self.get_device_name(card, port),
-            "#336699",
-            primary_icon,
-            secondary_icon,
+            primary_icon=primary_icon,
+            secondary_icon=secondary_icon,
             subtitle=self.get_port_name(port),
         )
         self.deck.set_key_image(self.key, tile)

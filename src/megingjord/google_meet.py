@@ -61,7 +61,7 @@ class GoogleMeetMuteKey:
         """
         Received mute state.
         """
-        if not self.controller:
+        if not self.controller or not self.deck:
             return
 
         icon, color = MUTE_ICON_COLOR[(self.control, muted)]

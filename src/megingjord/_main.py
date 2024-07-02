@@ -57,7 +57,8 @@ class Megingjord:
             self.app["color_theme"] = "dracula"
 
         self.app["colors"] = get_colors(self.app["color_theme"])
-        web.run_app(self.app, shutdown_timeout=0)
+
+        web.run_app(self.app, shutdown_timeout=0, port=2394)
 
 
 def main(

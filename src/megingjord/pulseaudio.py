@@ -340,10 +340,15 @@ class PulseDefaultSinkKey:
         if not self.pulse.pulse or not self.controller:
             return
 
+        title = "Unknown"
+        subtitle = None
+
         try:
             self.current_sink_name = sink_name
             new_sink = await self.pulse.pulse.get_sink_by_name(sink_name)
             card, port = await self.pulse.get_card_port_from_sink(new_sink)
+
+            title = self.get_device_name(card, port)
 
             primary_icon = self.get_port_icon(card, port)
 
@@ -354,16 +359,18 @@ class PulseDefaultSinkKey:
                 )
             else:
                 secondary_icon = None
+
+            subtitle = self.get_port_name(port)
         except Exception:  # pylint: disable=W0718
             logger.error("Failed to retrieve output details", exc_info=True)
             primary_icon = "help-rhombus-outline"
             secondary_icon = None
 
         tile = await self.controller.draw_tile(
-            self.get_device_name(card, port),
+            title=title,
             primary_icon=primary_icon,
             secondary_icon=secondary_icon,
-            subtitle=self.get_port_name(port),
+            subtitle=subtitle,
         )
         self.deck.set_key_image(self.key, tile)
 

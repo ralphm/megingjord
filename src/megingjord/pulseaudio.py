@@ -30,6 +30,7 @@ ICON_MAP = {
     "audio-card-analog-pci": "music-box-outline",
     "audio-headphones-bluetooth": "headphones-bluetooth",
     "audio-headphones": "headphones",
+    "audio-headset-bluetooth": "headphones-bluetooth",
     "audio-speakers": "speaker",
     "audio-speakers-bluetooth": "speaker-bluetooth",
     "video-display": "monitor",

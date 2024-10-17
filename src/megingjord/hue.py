@@ -132,9 +132,7 @@ class HueLightToggleKey:
 
             light = bridge.lights[self.light_id]
             on = not light.on.on
-            await bridge.lights.set_state(
-                self.light_id, on, brightness=100, transition_time=0
-            )
+            await bridge.lights.set_state(self.light_id, on, transition_time=0)
         except Exception:  # pylint: disable=W0718
             logger.error("Failed to set light state", exc_info=True)
             await self.set_tile_to_light(light_id=self.light_id)
@@ -167,9 +165,13 @@ class HueLightToggleKey:
             else:
                 device = bridge.lights.get_device(self.light_id)
                 text = device.metadata.name
+                if "plug" in device.product_data.product_name.casefold():
+                    icon_base = "power-plug"
+                else:
+                    icon_base = "lightbulb"
 
                 if light.is_on:
-                    icon = "lightbulb"
+                    icon = icon_base
                     if light.supports_color:
                         x, y = light.color.xy.x, light.color.xy.y
                         brightness = light.brightness / 100.0
@@ -190,7 +192,7 @@ class HueLightToggleKey:
                             "icon-primary": "tile-fg",
                         }
                 else:
-                    icon = "lightbulb-off-outline"
+                    icon = f"{icon_base}-off-outline"
                     colors = {
                         "icon-primary": "icon-inactive",
                         "tile-bg": "tile-inactive-bg",

@@ -8,10 +8,11 @@ import asyncio
 import logging
 import pprint
 from contextlib import suppress
-from typing import Any, AsyncIterator
+from typing import Any, AsyncIterator, Tuple
 
 from aiohttp import web
 from attrs import define, field
+from PIL import Image
 from pulsectl import (
     PulseCardInfo,
     PulseCardPortInfo,
@@ -22,7 +23,7 @@ from pulsectl import (
 from pulsectl_asyncio import PulseAsync
 from StreamDeck.Devices.StreamDeck import StreamDeck
 
-from .streamdeck import DeckController
+from .streamdeck import DeckController, ScrollerView
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +38,37 @@ ICON_MAP = {
     "audio-speakers-bluetooth": "speaker-bluetooth",
     "video-display": "monitor",
 }
+
+
+def get_port_icon(card: PulseCardInfo, port: PulseCardPortInfo) -> str:
+    """
+    Get the icon for a Pulse Audio port on a card.
+    """
+    return ICON_MAP.get(
+        port.proplist.get(
+            "device.icon_name", card.proplist.get("device.icon_name")
+        ),
+        ICON_MAP[None],
+    )
+
+
+def get_port_name(port: PulseCardPortInfo) -> str:
+    """
+    Get the name for a Pulse Audio port.
+    """
+    return str(port.description)
+
+
+def get_device_name(card: PulseCardInfo, port: PulseCardPortInfo) -> str:
+    """
+    Get the name for a Pulse Audio port.
+    """
+    return str(
+        port.proplist.get(
+            "device.product.name",
+            card.proplist.get("device.description", "Output"),
+        )
+    )
 
 
 @define
@@ -250,6 +282,34 @@ class PulseAudioCoordinator:
 
         return sorted(outputs, key=lambda item: item["priority"], reverse=True)
 
+    async def get_other_outputs(
+        self, sink: PulseSinkInfo
+    ) -> Tuple[PulseSinkInfo | None, PulseSinkInfo | None]:
+        """
+        Get previous and next outputs, if any.
+        """
+
+        outputs = await self.get_outputs()
+
+        output_previous = None
+        output_next = None
+        past_current = False
+        for output in outputs:
+            if (
+                output["card"].index == sink.card
+                and output["port"].name == sink.port_active.name
+            ):
+                past_current = True
+                continue
+
+            if not past_current:
+                output_previous = output
+            else:
+                output_next = output
+                break
+
+        return output_previous, output_next
+
     async def get_next_available_output(self) -> dict[str, Any] | None:
         """
         Get next available output.
@@ -351,19 +411,17 @@ class PulseDefaultSinkKey:
             new_sink = await self.pulse.pulse.get_sink_by_name(sink_name)
             card, port = await self.pulse.get_card_port_from_sink(new_sink)
 
-            title = self.get_device_name(card, port)
+            title = get_device_name(card, port)
 
-            primary_icon = self.get_port_icon(card, port)
+            primary_icon = get_port_icon(card, port)
 
             output = await self.pulse.get_next_available_output()
             if output:
-                secondary_icon = self.get_port_icon(
-                    output["card"], output["port"]
-                )
+                secondary_icon = get_port_icon(output["card"], output["port"])
             else:
                 secondary_icon = None
 
-            subtitle = self.get_port_name(port)
+            subtitle = get_port_name(port)
         except Exception:  # pylint: disable=W0718
             logger.error("Failed to retrieve output details", exc_info=True)
             primary_icon = "help-rhombus-outline"
@@ -377,33 +435,139 @@ class PulseDefaultSinkKey:
         )
         self.deck.set_key_image(self.key, tile)
 
-    def get_port_icon(
-        self, card: PulseCardInfo, port: PulseCardPortInfo
-    ) -> str | None:
+
+@define
+class PulseDefaultSinkDial:
+    """
+    Stream Deck dial control for switching the default PulseAudio sink.
+    """
+
+    dial: int
+    pulse: PulseAudioCoordinator
+    current_view: ScrollerView | None = field(init=False, default=None)
+    current_sink_name: str | None = field(init=False, default=None)
+
+    controller: DeckController | None = field(init=False)
+    deck: StreamDeck = field(init=False)
+
+    async def start(self, deck: StreamDeck) -> None:
         """
-        Get the icon for a Pulse Audio port on a card.
+        Start the dial.
         """
-        return ICON_MAP.get(
-            port.proplist.get(
-                "device.icon_name", card.proplist.get("device.icon_name")
+        self.deck = deck
+        async for sink_name in self.pulse.listen_default_sink():
+            await self.on_sink(sink_name)
+
+    async def stop(self) -> None:
+        """
+        Stop the dial.
+        """
+
+        if self.controller is not None:
+            await self.controller.render_lcd(tile_changed=self.dial)
+
+    async def on_sink(self, sink_name: str) -> None:
+        """
+        The PulseAudio default sink changed.
+        """
+        if not self.pulse.pulse or not self.controller:
+            return
+
+        self.current_sink_name = sink_name
+
+        self.current_view = await self.scroller_view_from_current_sink()
+
+        await self.controller.render_lcd(tile_changed=self.dial)
+
+    async def on_dial_push(self, dial_state: bool) -> None:
+        """
+        Called when the dial got pressed or released.
+        """
+
+    async def on_dial_turn(self, value: int) -> None:
+        """
+        Called when the dial got turned.
+        """
+        if (
+            not self.pulse.pulse
+            or not self.controller
+            or not self.current_sink_name
+        ):
+            return None
+
+        sink = await self.pulse.pulse.get_sink_by_name(self.current_sink_name)
+
+        output_previous, output_next = await self.pulse.get_other_outputs(sink)
+
+        if value < 0:
+            output = output_previous
+        else:
+            output = output_next
+
+        if output:
+            await self.pulse.set_default_sink(output["card"], output["port"])
+
+    async def scroller_view_from_current_sink(self) -> ScrollerView | None:
+        """
+        Get a scroller view.
+        """
+        if (
+            not self.pulse.pulse
+            or not self.controller
+            or not self.current_sink_name
+        ):
+            return None
+
+        title = "Unknown"
+
+        try:
+            sink = await self.pulse.pulse.get_sink_by_name(
+                self.current_sink_name
             )
+            card, port = await self.pulse.get_card_port_from_sink(sink)
+            title = get_device_name(card, port)
+            icon_main = get_port_icon(card, port)
+
+            output_previous, output_next = await self.pulse.get_other_outputs(
+                sink
+            )
+
+            if output_previous:
+                icon_previous = get_port_icon(
+                    output_previous["card"], output_previous["port"]
+                )
+            else:
+                icon_previous = None
+
+            if output_next:
+                icon_next = get_port_icon(
+                    output_next["card"], output_next["port"]
+                )
+            else:
+                icon_next = None
+        except Exception:  # pylint: disable=W0718
+            logger.error("Failed to retrieve output details", exc_info=True)
+            icon_main = "help-rhombus-outline"
+
+        return ScrollerView(
+            title=title,
+            icon_previous=icon_previous,
+            icon_main=icon_main,
+            icon_next=icon_next,
         )
 
-    def get_port_name(self, port: PulseCardPortInfo) -> str:
+    async def render(self, mini: bool = False) -> Image.Image:
         """
-        Get the name for a Pulse Audio port.
+        Render the portial of the LCD display (tile) for this dial.
         """
-        return str(port.description)
+        view = self.current_view
 
-    def get_device_name(
-        self, card: PulseCardInfo, port: PulseCardPortInfo
-    ) -> str:
-        """
-        Get the name for a Pulse Audio port.
-        """
-        return str(
-            port.proplist.get(
-                "device.product.name",
-                card.proplist.get("device.description", "Output"),
-            )
+        if not self.pulse.pulse or not self.controller or view is None:
+            return Image.new("RGBA", (140, 100), "#00000000")
+
+        image = await self.controller.draw_dial_tile_scroller(
+            view=view,
+            mini=mini,
         )
+
+        return image

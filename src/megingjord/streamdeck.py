@@ -112,6 +112,18 @@ class Dial(Protocol):
 
 
 @define
+class ScrollerView:
+    """
+    View for a scroller displayed on the LCD tile.
+    """
+
+    title: str
+    icon_previous: str | None
+    icon_main: str
+    icon_next: str | None
+
+
+@define
 class DeckController:
     """
     Stream Deck controller
@@ -463,6 +475,83 @@ class DeckController:
                 ),
                 radius=3,
                 fill=self.get_color("dial-bar-fill"),
+            )
+
+        return image
+
+    async def draw_dial_tile_scroller(  # pylint: disable=R0913,R0914
+        self,
+        view: ScrollerView,
+        mini: bool = False,
+    ) -> Image.Image:
+        """
+        Draw dial tile for LCD.
+        """
+        image = Image.new("RGBA", (140, 100), "#00000000")
+
+        draw = ImageDraw.Draw(image)
+
+        margin_left = margin_right = 10
+        margin_top = 2
+        icon_size_active = 40
+        icon_size_inactive = 20
+
+        icon_image = await self.draw_icon(
+            view.icon_main, self.get_color("icon-active"), icon_size_active
+        )
+        image.alpha_composite(
+            icon_image,
+            (
+                round((image.width - icon_size_active) / 2.0),
+                round(image.height / 2.0 + 5),
+            ),
+        )
+
+        if view.icon_previous:
+            icon_image = await self.draw_icon(
+                view.icon_previous,
+                self.get_color("icon-inactive"),
+                icon_size_inactive,
+            )
+            image.alpha_composite(
+                icon_image,
+                (
+                    margin_left,
+                    round(
+                        image.height / 2.0
+                        + 5
+                        + (icon_size_active - icon_size_inactive) / 2.0
+                    ),
+                ),
+            )
+
+        if view.icon_next:
+            icon_image = await self.draw_icon(
+                view.icon_next,
+                self.get_color("icon-inactive"),
+                icon_size_inactive,
+            )
+            image.alpha_composite(
+                icon_image,
+                (
+                    image.width - margin_right - icon_size_inactive,
+                    round(
+                        image.height / 2.0
+                        + 5
+                        + (icon_size_active - icon_size_inactive) / 2.0
+                    ),
+                ),
+            )
+
+        if not mini:
+            font = ImageFont.truetype(UBUNTU_FONT, 18)
+            text = textwrap.shorten(view.title, width=15, placeholder="…")
+            draw.text(
+                (round(image.width / 2.0), margin_top),
+                text=text,
+                font=font,
+                anchor="ma",
+                fill=self.get_color("dial-title"),
             )
 
         return image

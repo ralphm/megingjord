@@ -4,6 +4,8 @@
 PulseAudio utilities.
 """
 
+from __future__ import annotations
+
 import asyncio
 import logging
 import pprint
@@ -72,6 +74,96 @@ def get_device_name(card: PulseCardInfo, port: PulseCardPortInfo) -> str:
 
 
 @define
+class PulseOutput:
+    """
+    PulseAudio Output.
+
+    A PulseAudio output is a combination of a card and port. Additional meta
+    data include its priority based on the port priority, adjusted by
+    configuration.
+    """
+
+    coordinator: PulseAudioCoordinator = field(repr=False)
+    card: PulseCardInfo
+    port: PulseCardPortInfo
+
+    @property
+    def priority(self) -> int:
+        """
+        Output priority.
+        """
+
+        def check_resource(
+            matcher: dict[str, Any],
+            resource: PulseCardInfo | PulseCardPortInfo,
+        ) -> bool:
+            if "name" in matcher:
+                if resource.name != matcher["name"]:
+                    return False
+            for key, value in matcher.get("proplist", {}).items():
+                if key not in resource.proplist:
+                    return False
+                if value != resource.proplist[key]:
+                    return False
+            return True
+
+        def check_rule(rule: dict[str, Any]) -> bool:
+            return check_resource(
+                rule.get("card", {}), self.card
+            ) and check_resource(rule.get("port", {}), self.port)
+
+        weight_adjust = 0
+        for weight_rule in self.coordinator.output_weights:
+            if check_rule(weight_rule):
+                weight_adjust += weight_rule["weight"]
+
+        return int(self.port.priority) + weight_adjust
+
+    @property
+    def icon(self) -> str:
+        """
+        Get the port icon.
+        """
+        return get_port_icon(self.card, self.port)
+
+    @property
+    def port_name(self) -> str:
+        """
+        Get the port name.
+        """
+        return get_port_name(self.port)
+
+    @property
+    def device_name(self) -> str:
+        """
+        Get the device name.
+        """
+        return get_device_name(self.card, self.port)
+
+    def matches_sink(self, sink: PulseSinkInfo) -> bool:
+        """
+        This output matches the given sink.
+        """
+        return bool(
+            sink.card == self.card.index
+            and sink.port_active
+            and sink.port_active.name == self.port.name
+        )
+
+    async def get_sink(self) -> PulseSinkInfo:
+        """
+        Find an available sink for the requested port in the current profile.
+        """
+        pulse = await self.coordinator.get_pulse()
+        sinks = await pulse.sink_list()
+        for sink in sinks:
+            if self.matches_sink(sink):
+                return sink
+
+        return None
+
+
+@define
 class PulseAudioCoordinator:
     """
     PulseAudio coordinator.
@@ -84,6 +176,10 @@ class PulseAudioCoordinator:
     output_weights: list[dict[str, Any]]
     pulse: PulseAsync | None = field(init=False, default=None)
     subscribers: dict[object, asyncio.Queue[PulseEventInfo]] = field(
+        init=False, factory=dict
+    )
+
+    outputs: dict[tuple[int, str], PulseOutput] = field(
         init=False, factory=dict
     )
 
@@ -176,55 +272,44 @@ class PulseAudioCoordinator:
             yield await self.get_default_sink()
             done = await queue.get() is None
 
-    async def get_sink_for_port(
-        self, card: PulseCardInfo, port: PulseCardPortInfo
-    ) -> PulseSinkInfo:
-        """
-        Find an available sink for the requested port in the current profile.
-        """
-        pulse = await self.get_pulse()
-
-        sinks = await pulse.sink_list()
-        for sink in sinks:
-            if (
-                sink.card == card.index
-                and sink.port_active
-                and sink.port_active.name == port.name
-            ):
-                return sink
-
-        return None
-
-    async def set_default_sink(
-        self, card: PulseCardInfo, port: PulseCardPortInfo
-    ) -> None:
+    async def set_default_sink(self, output: PulseOutput) -> None:
         """
         Set default sink.
         """
         pulse = await self.get_pulse()
 
-        port_sink = await self.get_sink_for_port(card, port)
+        port_sink = await output.get_sink()
 
         if not port_sink:
             # We probably need to switch profiles
-            original_profile = card.profile_active
+            original_profile = output.card.profile_active
             for profile_name in sorted(
-                card.profile_list, key=lambda profile: profile.priority
+                output.card.profile_list, key=lambda profile: profile.priority
             ):
                 if profile_name == original_profile:
                     continue  # Already tried above
 
-                await pulse.card_profile_set(card, profile_name)
-                port_sink = await self.get_sink_for_port(card, port)
+                await pulse.card_profile_set(output.card, profile_name)
+                port_sink = await output.get_sink()
 
                 if port_sink:
                     break
 
         await pulse.default_set(port_sink)
 
-    async def get_card_port_from_sink(
-        self, sink: PulseSinkInfo
-    ) -> tuple[PulseCardInfo, PulseCardPortInfo]:
+    def get_output_from_card_port(
+        self, card: PulseCardInfo, port: PulseCardPortInfo
+    ) -> PulseOutput:
+        """
+        Get the PulseAudio output for the given card and port.
+        """
+        output = self.outputs.get((card.index, port.name))
+        if output is None:
+            output = PulseOutput(self, card=card, port=port)
+            self.outputs[card.index, port.name] = output
+        return output
+
+    async def get_output_from_sink(self, sink: PulseSinkInfo) -> PulseOutput:
         """
         Get the Pulse Audio card and port for a given sink.
         """
@@ -232,59 +317,28 @@ class PulseAudioCoordinator:
         card = await pulse.card_info(sink.card)
         for port in card.port_list:
             if port.name == sink.port_active.name:
-                return card, port
+                return self.get_output_from_card_port(card, port)
 
         raise KeyError("Port not found")
 
-    async def get_outputs(self) -> list[dict[str, Any]]:
+    async def get_outputs(self) -> list[PulseOutput]:
         """
         Get all available outputs, ordered by priority.
         """
         pulse = await self.get_pulse()
         cards = await pulse.card_list()
 
-        def check_resource(
-            matcher: dict[str, Any],
-            resource: PulseCardInfo | PulseCardPortInfo,
-        ) -> bool:
-            if "name" in matcher:
-                if resource.name != matcher["name"]:
-                    return False
-            for key, value in matcher.get("proplist", {}).items():
-                if key not in resource.proplist:
-                    return False
-                if value != resource.proplist[key]:
-                    return False
-            return True
-
-        def check_rule(
-            rule: dict[str, Any], card: PulseCardInfo, port: PulseCardPortInfo
-        ) -> bool:
-            return check_resource(
-                rule.get("card", {}), card
-            ) and check_resource(rule.get("port", {}), port)
-
-        outputs: list[dict[str, Any]] = []
+        outputs: list[PulseOutput] = []
         for card in cards:
             for port in card.port_list:
                 if port.direction == "output" and port.available != "no":
-                    weight_adjust = 0
-                    for weight_rule in self.output_weights:
-                        if check_rule(weight_rule, card, port):
-                            weight_adjust += weight_rule["weight"]
-                    outputs.append(
-                        {
-                            "card": card,
-                            "port": port,
-                            "priority": port.priority + weight_adjust,
-                        }
-                    )
+                    outputs.append(self.get_output_from_card_port(card, port))
 
-        return sorted(outputs, key=lambda item: item["priority"], reverse=True)
+        return sorted(outputs, key=lambda item: item.priority, reverse=True)
 
     async def get_other_outputs(
         self, sink: PulseSinkInfo
-    ) -> Tuple[PulseSinkInfo | None, PulseSinkInfo | None]:
+    ) -> Tuple[PulseOutput | None, PulseOutput | None]:
         """
         Get previous and next outputs, if any.
         """
@@ -295,10 +349,7 @@ class PulseAudioCoordinator:
         output_next = None
         past_current = False
         for output in outputs:
-            if (
-                output["card"].index == sink.card
-                and output["port"].name == sink.port_active.name
-            ):
+            if output.matches_sink(sink):
                 past_current = True
                 continue
 
@@ -310,7 +361,7 @@ class PulseAudioCoordinator:
 
         return output_previous, output_next
 
-    async def get_next_available_output(self) -> dict[str, Any] | None:
+    async def get_next_available_output(self) -> PulseOutput | None:
         """
         Get next available output.
         """
@@ -333,10 +384,7 @@ class PulseAudioCoordinator:
         # Switch to first available different output
         for output in outputs:
             logger.debug(f"    Output {output}:")
-            if (
-                output["card"].index == current_sink.card
-                and output["port"].name == current_sink.port_active.name
-            ):
+            if output.matches_sink(current_sink):
                 logger.debug(
                     "      This is the currently active output, skipping"
                 )
@@ -392,7 +440,7 @@ class PulseDefaultSinkKey:
 
         logger.debug("      Setting as default")
         try:
-            await self.pulse.set_default_sink(output["card"], output["port"])
+            await self.pulse.set_default_sink(output)
         except Exception:  # pylint: disable=W0718
             logger.error("Failed to set default sink", exc_info=True)
 
@@ -405,23 +453,23 @@ class PulseDefaultSinkKey:
 
         title = "Unknown"
         subtitle = None
+        output: PulseOutput | None
 
         try:
             self.current_sink_name = sink_name
             new_sink = await self.pulse.pulse.get_sink_by_name(sink_name)
-            card, port = await self.pulse.get_card_port_from_sink(new_sink)
+            output = await self.pulse.get_output_from_sink(new_sink)
 
-            title = get_device_name(card, port)
-
-            primary_icon = get_port_icon(card, port)
+            title = output.device_name
+            subtitle = output.port_name
+            primary_icon = output.icon
 
             output = await self.pulse.get_next_available_output()
             if output:
-                secondary_icon = get_port_icon(output["card"], output["port"])
+                secondary_icon = output.icon
             else:
                 secondary_icon = None
 
-            subtitle = get_port_name(port)
         except Exception:  # pylint: disable=W0718
             logger.error("Failed to retrieve output details", exc_info=True)
             primary_icon = "help-rhombus-outline"
@@ -505,7 +553,7 @@ class PulseDefaultSinkDial:
             output = output_next
 
         if output:
-            await self.pulse.set_default_sink(output["card"], output["port"])
+            await self.pulse.set_default_sink(output)
 
     async def scroller_view_from_current_sink(self) -> ScrollerView | None:
         """
@@ -524,25 +572,21 @@ class PulseDefaultSinkDial:
             sink = await self.pulse.pulse.get_sink_by_name(
                 self.current_sink_name
             )
-            card, port = await self.pulse.get_card_port_from_sink(sink)
-            title = get_device_name(card, port)
-            icon_main = get_port_icon(card, port)
+            output = await self.pulse.get_output_from_sink(sink)
+            title = output.device_name
+            icon_main = output.icon
 
             output_previous, output_next = await self.pulse.get_other_outputs(
                 sink
             )
 
             if output_previous:
-                icon_previous = get_port_icon(
-                    output_previous["card"], output_previous["port"]
-                )
+                icon_previous = output_previous.icon
             else:
                 icon_previous = None
 
             if output_next:
-                icon_next = get_port_icon(
-                    output_next["card"], output_next["port"]
-                )
+                icon_next = output_next.icon
             else:
                 icon_next = None
         except Exception:  # pylint: disable=W0718

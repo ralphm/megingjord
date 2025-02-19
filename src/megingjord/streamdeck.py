@@ -14,11 +14,11 @@ import time
 from datetime import datetime
 from io import BytesIO
 from pathlib import Path
-from typing import Protocol
+from typing import Protocol, Sequence
 
 from aiohttp import web
 from async_lru import alru_cache
-from attrs import define, field
+from attrs import Attribute, define, field
 from cairosvg import svg2png
 from PIL import Image, ImageDraw, ImageFont
 from StreamDeck.DeviceManager import DeviceManager
@@ -109,6 +109,65 @@ class Dial(Protocol):
         the information rendered on the bottom half of the tile should alway be
         visible.
         """
+
+
+@define
+class ScrollerItem(Protocol):
+    """
+    An item for the scroller view.
+    """
+
+    wrapped: object
+
+    @property
+    def title(self) -> str:
+        """
+        The title for this item.
+        """
+
+    @property
+    def subtitle(self) -> str | None:
+        """
+        The subtitle for optional additional information.
+        """
+
+    @property
+    def icon(self) -> str:
+        """
+        The icon for this item.
+        """
+
+    @property
+    def current(self) -> bool:
+        """
+        Indicator for this item being current.
+        """
+
+
+@define
+class ScrollerView:
+    """
+    View for a scroller displayed on the LCD tile.
+    """
+
+    items: Sequence[ScrollerItem] = field()
+    selected: int = 0
+
+    @items.validator
+    def _check_items(
+        self,
+        _attribute: Attribute[Sequence[ScrollerItem]],
+        value: Sequence[ScrollerItem],
+    ) -> None:
+        if len(value) == 0:
+            raise ValueError("items must have at least one item")
+
+    @property
+    def selected_item(self) -> ScrollerItem:
+        """
+        Return item corresponding with selected item index.
+        """
+        return self.items[self.selected]
 
 
 @define
@@ -464,6 +523,104 @@ class DeckController:
                 radius=3,
                 fill=self.get_color("dial-bar-fill"),
             )
+
+        return image
+
+    async def draw_dial_tile_scroller(  # pylint: disable=R0913,R0914
+        self,
+        view: ScrollerView,
+        mini: bool = False,
+    ) -> Image.Image:
+        """
+        Draw dial tile for LCD.
+        """
+        image = Image.new("RGBA", (140, 100), "#00000000")
+
+        draw = ImageDraw.Draw(image)
+
+        margin_left = margin_right = 10
+        margin_top = 2
+        icon_size_active = 40
+        icon_size_inactive = 20
+
+        if view.selected > 0:
+            item = view.items[view.selected - 1]
+            color = self.get_color(
+                "icon-active" if item.current else "icon-inactive"
+            )
+            icon_image = await self.draw_icon(
+                item.icon,
+                color,
+                icon_size_inactive,
+            )
+            image.alpha_composite(
+                icon_image,
+                (
+                    margin_left,
+                    round(
+                        image.height / 2.0
+                        + 5
+                        + (icon_size_active - icon_size_inactive) / 2.0
+                    ),
+                ),
+            )
+
+        if view.selected < len(view.items) - 1:
+            item = view.items[view.selected + 1]
+            color = self.get_color(
+                "icon-active" if item.current else "icon-inactive"
+            )
+            icon_image = await self.draw_icon(
+                item.icon,
+                color,
+                icon_size_inactive,
+            )
+            image.alpha_composite(
+                icon_image,
+                (
+                    image.width - margin_right - icon_size_inactive,
+                    round(
+                        image.height / 2.0
+                        + 5
+                        + (icon_size_active - icon_size_inactive) / 2.0
+                    ),
+                ),
+            )
+
+        item = view.items[view.selected]
+        color = self.get_color("icon-active" if item.current else "dial-icon")
+        icon_image = await self.draw_icon(item.icon, color, icon_size_active)
+        image.alpha_composite(
+            icon_image,
+            (
+                round((image.width - icon_size_active) / 2.0),
+                round(image.height / 2.0 + 5),
+            ),
+        )
+
+        if not mini:
+            font = ImageFont.truetype(UBUNTU_FONT, 18)
+            text = textwrap.shorten(item.title, width=15, placeholder="…")
+            draw.text(
+                (round(image.width / 2.0), margin_top),
+                text=text,
+                font=font,
+                anchor="ma",
+                fill=self.get_color("dial-title"),
+            )
+
+            if item.subtitle:
+                font = ImageFont.truetype(UBUNTU_FONT, 14)
+                text = textwrap.shorten(
+                    item.subtitle, width=22, placeholder="…"
+                )
+                draw.text(
+                    (round(image.width / 2.0), margin_top + 20),
+                    text=text,
+                    font=font,
+                    anchor="ma",
+                    fill=self.get_color("dial-title"),
+                )
 
         return image
 

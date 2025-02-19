@@ -10,7 +10,7 @@ import asyncio
 import logging
 import pprint
 from contextlib import suppress
-from typing import Any, AsyncIterator, Tuple
+from typing import Any, AsyncIterator
 
 from aiohttp import web
 from attrs import define, field
@@ -25,7 +25,7 @@ from pulsectl import (
 from pulsectl_asyncio import PulseAsync
 from StreamDeck.Devices.StreamDeck import StreamDeck
 
-from .streamdeck import DeckController, ScrollerView
+from .streamdeck import DeckController, ScrollerItem, ScrollerView
 
 logger = logging.getLogger(__name__)
 
@@ -86,6 +86,7 @@ class PulseOutput:
     coordinator: PulseAudioCoordinator = field(repr=False)
     card: PulseCardInfo
     port: PulseCardPortInfo
+    active: bool = False
 
     @property
     def priority(self) -> int:
@@ -164,6 +165,31 @@ class PulseOutput:
 
 
 @define
+class PulseOutputScrollerItem(ScrollerItem):
+    """
+    L{ScrollerItem} wrapper for L{PulseOutput}.
+    """
+
+    wrapped: PulseOutput
+
+    @property
+    def title(self) -> str:
+        return self.wrapped.device_name
+
+    @property
+    def subtitle(self) -> str | None:
+        return self.wrapped.port_name
+
+    @property
+    def icon(self) -> str:
+        return self.wrapped.icon
+
+    @property
+    def current(self) -> bool:
+        return self.wrapped.active
+
+
+@define
 class PulseAudioCoordinator:
     """
     PulseAudio coordinator.
@@ -182,6 +208,9 @@ class PulseAudioCoordinator:
     outputs: dict[tuple[int, str], PulseOutput] = field(
         init=False, factory=dict
     )
+
+    default_sink_name: str | None = field(init=False, default=None)
+    default_output: PulseOutput | None = field(init=False, default=None)
 
     def __attrs_post_init__(self) -> None:
         self.app.cleanup_ctx.append(self.start)
@@ -255,6 +284,16 @@ class PulseAudioCoordinator:
         pulse = await self.get_pulse()
         await pulse._connected.wait()  # pylint: disable=W0212
         info = await pulse.server_info()
+
+        if info.default_sink_name != self.default_sink_name:
+            if self.default_output:
+                self.default_output.active = False
+
+            sink = await pulse.get_sink_by_name(info.default_sink_name)
+            output = await self.get_output_from_sink(sink)
+            output.active = True
+            self.default_output = output
+
         return info.default_sink_name
 
     async def listen_default_sink(self) -> AsyncIterator[PulseSinkInfo]:
@@ -335,31 +374,6 @@ class PulseAudioCoordinator:
                     outputs.append(self.get_output_from_card_port(card, port))
 
         return sorted(outputs, key=lambda item: item.priority, reverse=True)
-
-    async def get_other_outputs(
-        self, sink: PulseSinkInfo
-    ) -> Tuple[PulseOutput | None, PulseOutput | None]:
-        """
-        Get previous and next outputs, if any.
-        """
-
-        outputs = await self.get_outputs()
-
-        output_previous = None
-        output_next = None
-        past_current = False
-        for output in outputs:
-            if output.matches_sink(sink):
-                past_current = True
-                continue
-
-            if not past_current:
-                output_previous = output
-            else:
-                output_next = output
-                break
-
-        return output_previous, output_next
 
     async def get_next_available_output(self) -> PulseOutput | None:
         """
@@ -523,7 +537,7 @@ class PulseDefaultSinkDial:
 
         self.current_sink_name = sink_name
 
-        self.current_view = await self.scroller_view_from_current_sink()
+        self.current_view = await self.scroller_view_from_default_output()
 
         await self.controller.render_lcd(tile_changed=self.dial)
 
@@ -531,6 +545,19 @@ class PulseDefaultSinkDial:
         """
         Called when the dial got pressed or released.
         """
+        if (
+            not self.pulse.pulse
+            or not self.controller
+            or not self.current_view
+        ):
+            return
+
+        output = self.current_view.selected_item.wrapped
+
+        assert isinstance(output, PulseOutput)
+
+        if dial_state:
+            await self.pulse.set_default_sink(output)
 
     async def on_dial_turn(self, value: int) -> None:
         """
@@ -541,64 +568,46 @@ class PulseDefaultSinkDial:
             or not self.controller
             or not self.current_sink_name
         ):
+            return
+
+        if not self.current_view:
             return None
 
-        sink = await self.pulse.pulse.get_sink_by_name(self.current_sink_name)
-
-        output_previous, output_next = await self.pulse.get_other_outputs(sink)
-
         if value < 0:
-            output = output_previous
+            self.current_view.selected = max(
+                0, self.current_view.selected + value
+            )
         else:
-            output = output_next
+            self.current_view.selected = min(
+                len(self.current_view.items) - 1,
+                self.current_view.selected + value,
+            )
 
-        if output:
-            await self.pulse.set_default_sink(output)
+        await self.controller.render_lcd(tile_changed=self.dial)
 
-    async def scroller_view_from_current_sink(self) -> ScrollerView | None:
+    async def scroller_view_from_default_output(self) -> ScrollerView | None:
         """
         Get a scroller view.
         """
+
         if (
             not self.pulse.pulse
             or not self.controller
-            or not self.current_sink_name
+            or not self.pulse.default_output
         ):
             return None
 
-        title = "Unknown"
+        items = []
+        selected = 0
+        index = 0
+        for output in await self.pulse.get_outputs():
+            item = PulseOutputScrollerItem(output)
+            if output == self.pulse.default_output:
+                selected = index
+            items.append(item)
+            index += 1
 
-        try:
-            sink = await self.pulse.pulse.get_sink_by_name(
-                self.current_sink_name
-            )
-            output = await self.pulse.get_output_from_sink(sink)
-            title = output.device_name
-            icon_main = output.icon
-
-            output_previous, output_next = await self.pulse.get_other_outputs(
-                sink
-            )
-
-            if output_previous:
-                icon_previous = output_previous.icon
-            else:
-                icon_previous = None
-
-            if output_next:
-                icon_next = output_next.icon
-            else:
-                icon_next = None
-        except Exception:  # pylint: disable=W0718
-            logger.error("Failed to retrieve output details", exc_info=True)
-            icon_main = "help-rhombus-outline"
-
-        return ScrollerView(
-            title=title,
-            icon_previous=icon_previous,
-            icon_main=icon_main,
-            icon_next=icon_next,
-        )
+        return ScrollerView(items=items, selected=selected)
 
     async def render(self, mini: bool = False) -> Image.Image:
         """

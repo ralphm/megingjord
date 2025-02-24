@@ -184,6 +184,7 @@ class DeckController:
 
     # Status bar inhibited until this time
     status_inhibited: float = field(init=False, default=0)
+    tasks: set[asyncio.Task[None]] = field(init=False, factory=set)
 
     def register_key(self, key: Key) -> None:
         """
@@ -257,8 +258,6 @@ class DeckController:
         """
         streamdecks = DeviceManager().enumerate()
 
-        tasks = []
-
         if not streamdecks:
             return
 
@@ -276,23 +275,21 @@ class DeckController:
         deck.brightness = 100
         self.set_brightness(deck.brightness)
 
-        tasks.extend(
-            [
-                asyncio.create_task(key.start(deck))
-                for key in self.keys.values()
-            ]
-        )
+        for key in self.keys.values():
+            task = asyncio.create_task(key.start(deck))
+            self.tasks.add(task)
+            task.add_done_callback(self.tasks.discard)
 
-        tasks.extend(
-            [
-                asyncio.create_task(dial.start(deck))
-                for dial in self.dials.values()
-            ]
-        )
+        for dial in self.dials.values():
+            task = asyncio.create_task(dial.start(deck))
+            self.tasks.add(task)
+            task.add_done_callback(self.tasks.discard)
 
-        tasks.append(asyncio.create_task(self.clock_on_lcd()))
+        task = asyncio.create_task(self.clock_on_lcd())
+        self.tasks.add(task)
+        task.add_done_callback(self.tasks.discard)
 
-        await asyncio.gather(*tasks)
+        await asyncio.gather(*self.tasks)
 
         await self.done.wait()
 
@@ -306,9 +303,17 @@ class DeckController:
                 try:
                     await self.listen()
                 except TransportError:
-                    logger.error(
-                        "Lost connection to Stream Deck", exc_info=True
-                    )
+                    logger.info("Lost connection to Stream Deck")
+
+                    self.deck = None
+
+                    for task in self.tasks:
+                        task.cancel()
+
+                    try:
+                        await self.stop()
+                    except Exception:  # pylint: disable=W0718
+                        logger.error("Oops stopping", exc_info=True)
                 except Exception:  # pylint: disable=W0718
                     logger.error("Oops", exc_info=True)
 
@@ -324,11 +329,26 @@ class DeckController:
         logger.debug("Stopping the deck")
 
         for key in self.keys.values():
-            await key.stop()
+            try:
+                await key.stop()
+            except TransportError:
+                pass
+            except Exception:  # pylint: disable=W0718
+                logger.error(f"Error stopping key {key}", exc_info=True)
 
-        self.deck.set_brightness(0)
-        self.deck.reset()
-        self.deck.close()
+        for dial in self.dials.values():
+            try:
+                await dial.stop()
+            except TransportError:
+                pass
+            except Exception:  # pylint: disable=W0718
+                logger.error(f"Error stopping dial {dial}", exc_info=True)
+
+        if self.deck:
+            self.deck.set_brightness(0)
+            self.deck.reset()
+            self.deck.close()
+            self.deck = None
         await asyncio.sleep(0.5)
 
     def get_color(
@@ -672,6 +692,9 @@ class DeckController:
         """
         Render the LCD display.
         """
+        if not self.deck:
+            return
+
         image = Image.new("RGBA", (800, 100), self.get_color("lcd-bg"))
 
         if tile_changed in (1, 2):

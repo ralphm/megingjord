@@ -100,10 +100,10 @@ class HueLightToggleKey:
         """
         Stop this key.
         """
-        self.deck.set_key_image(self.key, None)
-
         for unsubscribe in self.unsubscribes:
             unsubscribe()
+
+        self.deck.set_key_image(self.key, None)
 
     async def on_hue_connected(
         self, _event_type: EventType, _event: dict[str, Any] | None = None

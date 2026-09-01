@@ -69,6 +69,25 @@ function firstMatch(selectors) {
   return null;
 }
 
+// The join button is a DIV wrapper around the actual button element; the
+// disabled state lives on the inner button.
+function getJoinButton() {
+  const outer = firstMatch([
+    ENTER_MEETING_SELECTOR,
+    ENTER_MEETING_HOST_SELECTOR,
+  ]);
+  if (!outer) {
+    return null;
+  }
+  return outer.querySelector("button") || outer;
+}
+
+function isDisabled(element) {
+  return (
+    element.disabled || element.getAttribute("aria-disabled") === "true"
+  );
+}
+
 function readState() {
   const state = { phase: detectPhase() };
 
@@ -89,15 +108,9 @@ function readState() {
   }
 
   if (state.phase === "greenRoom") {
-    const enterButton = firstMatch([
-      ENTER_MEETING_SELECTOR,
-      ENTER_MEETING_HOST_SELECTOR,
-    ]);
+    const enterButton = getJoinButton();
     if (enterButton) {
-      state.enterReady = !(
-        enterButton.disabled ||
-        enterButton.getAttribute("aria-disabled") === "true"
-      );
+      state.enterReady = !isDisabled(enterButton);
     }
   } else if (state.phase === "lobby") {
     state.hasNextMeeting = !!document.querySelector(START_NEXT_SELECTOR);
@@ -152,15 +165,12 @@ const COMMANDS = {
     clickButton(START_NEXT_SELECTOR, "start next meeting") ||
     clickByText("Start"),
   enterMeeting: () => {
-    const button = firstMatch([
-      ENTER_MEETING_SELECTOR,
-      ENTER_MEETING_HOST_SELECTOR,
-    ]);
+    const button = getJoinButton();
     if (!button) {
       console.warn("Megingjord Meet: button not found: join now");
       return;
     }
-    if (button.disabled || button.getAttribute("aria-disabled") === "true") {
+    if (isDisabled(button)) {
       console.warn("Megingjord Meet: join button not ready");
       return;
     }

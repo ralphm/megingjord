@@ -53,8 +53,11 @@ const LEAVE_CONFIRMATION_SELECTOR = '[data-mdc-dialog-action="Pd96ce"]';
 const START_INSTANT_SELECTOR = '[jsname="CuSyi"]'; // verified: lobby
 const START_NEXT_SELECTOR = '[data-default-focus=true]'; // unverified
 const ENTER_MEETING_SELECTOR = '[jsname="Qx7uuf"]'; // verified: green room
-const REJOIN_SELECTOR = '[jsname="oI7Fj"] button'; // unverified
+const ENTER_MEETING_HOST_SELECTOR = '[jsname="z0F4cd"]'; // verified: green room (host)
+const REJOIN_SELECTOR = '[jsname="W6suGc"]'; // verified: exit hall
 const RETURN_HOME_SELECTOR = '[jsname="WIVZEd"] button'; // verified: exit hall
+const RETURN_HOME_GREEN_ROOM_SELECTOR =
+  '[aria-label="Return to home screen"]'; // verified: green room
 
 function firstMatch(selectors) {
   for (const selector of selectors) {
@@ -125,11 +128,13 @@ const COMMANDS = {
   startNextMeeting: () =>
     clickButton(START_NEXT_SELECTOR, "start next meeting") ||
     clickByText("Start"),
-  enterMeeting: () => clickButton(ENTER_MEETING_SELECTOR, "join now"),
+  enterMeeting: () =>
+    clickButton(ENTER_MEETING_SELECTOR, "join now") ||
+    clickButton(ENTER_MEETING_HOST_SELECTOR, "start (host)"),
   rejoin: () => clickButton(REJOIN_SELECTOR, "rejoin") || clickByText("Rejoin"),
   returnHome: () =>
     clickButton(RETURN_HOME_SELECTOR, "return home") ||
-    clickButton('[aria-label="Back"]', "back") ||
+    clickButton(RETURN_HOME_GREEN_ROOM_SELECTOR, "return home (green room)") ||
     clickByText("Return to home screen"),
 };
 

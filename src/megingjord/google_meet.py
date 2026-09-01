@@ -10,6 +10,7 @@ import json
 import logging
 import pprint
 import re
+import textwrap
 from typing import Any, AsyncIterator
 
 import aiohttp
@@ -134,6 +135,7 @@ class GoogleMeetActionKey:
     control: str
     ready: bool = field(default=True)
     title: str | None = field(default=None)
+    subtitle: str | None = field(default=None)
 
     controller: DeckController | None = field(init=False)
     deck: StreamDeck = field(init=False)
@@ -171,6 +173,16 @@ class GoogleMeetActionKey:
         self.title = label
         await self._draw()
 
+    async def on_subtitle(self, subtitle: str) -> None:
+        """
+        Received subtitle from the Meet UI.
+        """
+        if subtitle == self.subtitle:
+            return
+
+        self.subtitle = subtitle
+        await self._draw()
+
     async def _draw(self) -> None:
         """
         Draw the tile.
@@ -184,8 +196,13 @@ class GoogleMeetActionKey:
         if not self.ready:
             color = "google-meet-inactive"
 
+        subtitle = None
+        if self.subtitle:
+            subtitle = textwrap.shorten(self.subtitle, 20, placeholder="…")
+
         tile = await self.controller.draw_tile(
             title=title,
+            subtitle=subtitle,
             colors={
                 "tile-bg": f"{color}-bg",
                 "icon-primary": f"{color}-icon",
@@ -327,6 +344,12 @@ class GoogleMeetCoordinator:
                 key = self.control_keys["enter"]
                 assert isinstance(key, GoogleMeetActionKey)
                 await key.on_label(event["label"])
+        elif event["event"] == "subtitle":
+            control = event["control"]
+            if control in self.control_keys:
+                key = self.control_keys[control]
+                assert isinstance(key, GoogleMeetActionKey)
+                await key.on_subtitle(event["subtitle"])
         elif event["event"] == "hasNextMeeting":
             await self.set_control_visible(
                 "start-next", event["hasNextMeeting"]

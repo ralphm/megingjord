@@ -114,6 +114,9 @@ function forwardState(tabId) {
   if (state.enterReady !== undefined) {
     sendToMegingjord({ event: "enterReady", ready: state.enterReady });
   }
+  if (state.enterLabel !== undefined) {
+    sendToMegingjord({ event: "enterLabel", label: state.enterLabel });
+  }
   if (state.hasNextMeeting !== undefined) {
     sendToMegingjord({
       event: "hasNextMeeting",

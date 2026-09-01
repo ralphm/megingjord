@@ -111,6 +111,7 @@ function readState() {
     const enterButton = getJoinButton();
     if (enterButton) {
       state.enterReady = !isDisabled(enterButton);
+      state.enterLabel = (enterButton.textContent || "").trim();
     }
   } else if (state.phase === "lobby") {
     state.hasNextMeeting = !!document.querySelector(START_NEXT_SELECTOR);

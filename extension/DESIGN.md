@@ -39,7 +39,9 @@ JSON messages over `ws://127.0.0.1:2394`.
 | `cameraMutedState` | `{"event": "cameraMutedState", "muted": bool}` | |
 | `handMutedState` | `{"event": "handMutedState", "muted": bool}` | `muted` means hand not raised |
 | `enterReady` | `{"event": "enterReady", "ready": bool}` | Green room: join button clickable |
+| `enterLabel` | `{"event": "enterLabel", "label": str}` | Green room: join button text |
 | `hasNextMeeting` | `{"event": "hasNextMeeting", "hasNextMeeting": bool}` | Lobby: scheduled meeting present |
+| `subtitle` | `{"event": "subtitle", "control": str, "subtitle": str}` | Tile subtitle, e.g. meeting title for `start-next` / `enter` |
 
 ### Megingjord -> Extension
 

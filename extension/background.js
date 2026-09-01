@@ -123,6 +123,20 @@ function forwardState(tabId) {
       hasNextMeeting: state.hasNextMeeting,
     });
   }
+  if (state.nextMeetingTitle !== undefined) {
+    sendToMegingjord({
+      event: "subtitle",
+      control: "start-next",
+      subtitle: state.nextMeetingTitle,
+    });
+  }
+  if (state.meetingTitle !== undefined) {
+    sendToMegingjord({
+      event: "subtitle",
+      control: "enter",
+      subtitle: state.meetingTitle,
+    });
+  }
 }
 
 browser.runtime.onMessage.addListener((message, sender) => {

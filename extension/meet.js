@@ -132,8 +132,18 @@ function readState() {
       state.enterReady = !isDisabled(enterButton);
       state.enterLabel = (enterButton.textContent || "").trim();
     }
+    const titleElement = document.querySelector('[jsname="r4nke"]');
+    if (titleElement) {
+      state.meetingTitle = (titleElement.textContent || "").trim();
+    }
   } else if (state.phase === "lobby") {
-    state.hasNextMeeting = !!firstScheduledCard();
+    const card = firstScheduledCard();
+    state.hasNextMeeting = !!card;
+    if (card) {
+      state.nextMeetingTitle = (
+        card.getAttribute("aria-label") || card.textContent || ""
+      ).trim();
+    }
   }
 
   return state;

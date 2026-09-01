@@ -7,50 +7,54 @@
 // State is reported to the background script on change, on a low-frequency
 // poll (background tabs have throttled timers, so this is a fallback for
 // missed mutations), and when the tab becomes visible again.
+//
+// Selectors were verified against the live Meet UI (September 2026).
 
-// Phase detection. The meeting check comes first: some selectors of other
-// phases may also be present while in a meeting.
-const PHASE_SELECTORS = [
-  { phase: "meeting", selector: "div[data-meeting-title]" },
-  { phase: "greenRoom", selector: "[jscontroller=dyDNGc]" },
-  { phase: "exitHall", selector: "[jsname=r4nke]" },
-];
-
-const MIC_SELECTORS = [
-  'button[jsname="hw0c9"]', // after September 2024 Meet redesign
-  'div[role="button"][jsname="hw0c9"]', // used on the Join screen
-  'div[jsname="Dg9Wp"] [jsname="BOHaEe"]', // before September 2024 redesign
-];
-
-const CAMERA_SELECTORS = [
-  'button[jsname="psRWwc"]', // after September 2024 Meet redesign
-  'div[role="button"][jsname="psRWwc"]', // used on the Join screen
-  'div[jsname="R3GXJb"] [jsname="BOHaEe"]', // before September 2024 redesign
-];
-
-const HAND_SELECTORS = ['button[jsname="FpSaz"]'];
-
-const LEAVE_SELECTOR = '[jsname="CQylAd"]';
-const LEAVE_CONFIRMATION_SELECTOR = '[data-mdc-dialog-action="Pd96ce"]';
-
-const START_INSTANT_SELECTOR = '[jsname="CuSyi"]';
-const START_NEXT_SELECTOR = '[data-default-focus=true]';
-const ENTER_MEETING_SELECTOR = '[jsname="Qx7uuf"]';
-const REJOIN_SELECTOR = '[jsname="oI7Fj"] button';
-const RETURN_HOME_SELECTOR = '[jsname="WIVZEd"] button';
-
+// Phase detection. The meeting check comes first: the exit hall heading
+// jsname also appears in the green room (as the meeting title), so the exit
+// hall check requires the absence of mute controls.
 function detectPhase() {
   const path = window.location.pathname;
-  if (path === "/" || path === "/landing") {
+  if (path === "/" || path === "/home" || path === "/landing") {
     return "lobby";
   }
-  for (const { phase, selector } of PHASE_SELECTORS) {
-    if (document.querySelector(selector)) {
-      return phase;
-    }
+  if (document.querySelector('[jsname="CQylAd"]')) {
+    return "meeting";
+  }
+  if (document.querySelector('[jsname="Qx7uuf"]')) {
+    return "greenRoom";
+  }
+  if (
+    document.querySelector('[jsname="r4nke"]') &&
+    !document.querySelector("[data-is-muted]")
+  ) {
+    return "exitHall";
   }
   return undefined;
 }
+
+const MIC_SELECTORS = [
+  'button[jsname="hw0c9"]', // verified: meeting and green room
+  'div[role="button"][jsname="hw0c9"]', // older Join screen
+  'div[jsname="Dg9Wp"] [jsname="BOHaEe"]', // pre-2024 redesign
+];
+
+const CAMERA_SELECTORS = [
+  'button[jsname="psRWwc"]', // verified: meeting and green room
+  'div[role="button"][jsname="psRWwc"]', // older Join screen
+  'div[jsname="R3GXJb"] [jsname="BOHaEe"]', // pre-2024 redesign
+];
+
+const HAND_SELECTORS = ['button[jsname="FpSaz"]']; // verified: meeting
+
+const LEAVE_SELECTOR = '[jsname="CQylAd"]'; // verified: meeting
+const LEAVE_CONFIRMATION_SELECTOR = '[data-mdc-dialog-action="Pd96ce"]';
+
+const START_INSTANT_SELECTOR = '[jsname="CuSyi"]'; // verified: lobby
+const START_NEXT_SELECTOR = '[data-default-focus=true]'; // unverified
+const ENTER_MEETING_SELECTOR = '[jsname="Qx7uuf"]'; // verified: green room
+const REJOIN_SELECTOR = '[jsname="oI7Fj"] button'; // unverified
+const RETURN_HOME_SELECTOR = '[jsname="WIVZEd"] button'; // verified: exit hall
 
 function firstMatch(selectors) {
   for (const selector of selectors) {
@@ -94,6 +98,16 @@ function clickButton(selector, name) {
   return false;
 }
 
+function clickByText(text) {
+  for (const element of document.querySelectorAll("button,[role=button]")) {
+    if ((element.textContent || "").trim() === text) {
+      element.click();
+      return true;
+    }
+  }
+  return false;
+}
+
 const COMMANDS = {
   toggleMic: () => clickButton(MIC_SELECTORS.join(","), "mic"),
   toggleCamera: () => clickButton(CAMERA_SELECTORS.join(","), "camera"),
@@ -106,12 +120,17 @@ const COMMANDS = {
     }
   },
   startInstantMeeting: () =>
-    clickButton(START_INSTANT_SELECTOR, "start instant meeting"),
+    clickButton(START_INSTANT_SELECTOR, "start instant meeting") ||
+    clickButton('[aria-label="New meeting"]', "new meeting"),
   startNextMeeting: () =>
-    clickButton(START_NEXT_SELECTOR, "start next meeting"),
+    clickButton(START_NEXT_SELECTOR, "start next meeting") ||
+    clickByText("Start"),
   enterMeeting: () => clickButton(ENTER_MEETING_SELECTOR, "join now"),
-  rejoin: () => clickButton(REJOIN_SELECTOR, "rejoin"),
-  returnHome: () => clickButton(RETURN_HOME_SELECTOR, "return home"),
+  rejoin: () => clickButton(REJOIN_SELECTOR, "rejoin") || clickByText("Rejoin"),
+  returnHome: () =>
+    clickButton(RETURN_HOME_SELECTOR, "return home") ||
+    clickButton('[aria-label="Back"]', "back") ||
+    clickByText("Return to home screen"),
 };
 
 let lastState = null;

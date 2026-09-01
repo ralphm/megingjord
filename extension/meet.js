@@ -51,7 +51,7 @@ const LEAVE_SELECTOR = '[jsname="CQylAd"]'; // verified: meeting
 const LEAVE_CONFIRMATION_SELECTOR = '[data-mdc-dialog-action="Pd96ce"]';
 
 const START_INSTANT_SELECTOR = '[jsname="CuSyi"]'; // verified: lobby
-const START_NEXT_SELECTOR = '[data-default-focus=true]'; // unverified
+const START_NEXT_SELECTOR = '[jsname="PoaP2b"]'; // verified: lobby, first scheduled meeting card
 const ENTER_MEETING_SELECTOR = '[jsname="Qx7uuf"]'; // verified: green room
 const ENTER_MEETING_HOST_SELECTOR = '[jsname="z0F4cd"]'; // verified: green room (host)
 const REJOIN_SELECTOR = '[jsname="W6suGc"]'; // verified: exit hall
@@ -100,9 +100,7 @@ function readState() {
       );
     }
   } else if (state.phase === "lobby") {
-    state.hasNextMeeting = !!(
-      document.querySelector(START_NEXT_SELECTOR) || queryByText("Start")
-    );
+    state.hasNextMeeting = !!document.querySelector(START_NEXT_SELECTOR);
   }
 
   return state;

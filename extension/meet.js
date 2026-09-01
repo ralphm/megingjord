@@ -177,9 +177,9 @@ const COMMANDS = {
 
 let lastState = null;
 
-function sendState() {
+function sendState(force = false) {
   const state = readState();
-  if (JSON.stringify(state) !== JSON.stringify(lastState)) {
+  if (force || JSON.stringify(state) !== JSON.stringify(lastState)) {
     lastState = state;
     browser.runtime.sendMessage({ type: "state", state });
   }
@@ -196,6 +196,11 @@ observer.observe(document.body, {
 
 // Fallback for changes missed while the tab was throttled in the background.
 setInterval(sendState, 1000);
+
+// Keep the background event page alive (it is unloaded after ~30s of
+// inactivity, which would kill the WebSocket) and re-push state after
+// Megingjord restarts.
+setInterval(() => sendState(true), 20000);
 
 document.addEventListener("visibilitychange", () => {
   if (!document.hidden) {

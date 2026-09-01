@@ -54,7 +54,7 @@ const START_INSTANT_SELECTOR = '[jsname="CuSyi"]'; // verified: lobby
 const SCHEDULED_SECTION_SELECTOR = 'SECTION[jsname="n39Uf"]'; // verified: lobby
 const ENTER_MEETING_SELECTOR = '[jsname="Qx7uuf"]'; // verified: green room
 const ENTER_MEETING_HOST_SELECTOR = '[jsname="z0F4cd"]'; // verified: green room (host)
-const REJOIN_SELECTOR = '[jsname="W6suGc"]'; // verified: exit hall
+const REJOIN_SELECTOR = 'button[jsname="W6suGc"]'; // verified: exit hall, inner button
 const RETURN_HOME_SELECTOR = '[jsname="WIVZEd"] button'; // verified: exit hall
 const RETURN_HOME_GREEN_ROOM_SELECTOR =
   '[aria-label="Return to home screen"]'; // verified: green room
@@ -88,19 +88,24 @@ function isDisabled(element) {
   );
 }
 
-// The first future meeting card in the Scheduled section. In-progress
-// meetings have a Join button on the card; future ones do not.
-function firstFutureScheduledCard() {
+// The first meeting card in the Scheduled section.
+function firstScheduledCard() {
   const section = document.querySelector(SCHEDULED_SECTION_SELECTOR);
   if (!section) {
     return null;
   }
-  for (const card of section.querySelectorAll('[jsname="PoaP2b"]')) {
-    if (!card.querySelector('button[jsname="Dq2Egc"]')) {
-      return card;
-    }
+  return section.querySelector('[jsname="PoaP2b"]');
+}
+
+// The hand button does not use aria-pressed; raised is indicated by a CSS
+// class and the aria-label flipping to "Lower hand".
+function isHandRaised(button) {
+  const cls = (button.className || "").toString();
+  if (cls.includes("HlOR8e")) {
+    return true;
   }
-  return null;
+  const label = (button.getAttribute("aria-label") || "").toLowerCase();
+  return label.includes("lower hand");
 }
 
 function readState() {
@@ -118,8 +123,7 @@ function readState() {
 
   const handButton = firstMatch(HAND_SELECTORS);
   if (handButton) {
-    // "muted" means the hand is not raised.
-    state.handMuted = handButton.getAttribute("aria-pressed") !== "true";
+    state.handMuted = !isHandRaised(handButton);
   }
 
   if (state.phase === "greenRoom") {
@@ -129,7 +133,7 @@ function readState() {
       state.enterLabel = (enterButton.textContent || "").trim();
     }
   } else if (state.phase === "lobby") {
-    state.hasNextMeeting = !!firstFutureScheduledCard();
+    state.hasNextMeeting = !!firstScheduledCard();
   }
 
   return state;
@@ -178,7 +182,7 @@ const COMMANDS = {
     clickButton(START_INSTANT_SELECTOR, "start instant meeting") ||
     clickButton('[aria-label="New meeting"]', "new meeting"),
   startNextMeeting: () => {
-    const card = firstFutureScheduledCard();
+    const card = firstScheduledCard();
     if (card) {
       card.click();
       return;

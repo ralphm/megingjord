@@ -111,6 +111,15 @@ function forwardState(tabId) {
   if (state.handMuted !== undefined) {
     sendToMegingjord({ event: "handMutedState", muted: state.handMuted });
   }
+  if (state.enterReady !== undefined) {
+    sendToMegingjord({ event: "enterReady", ready: state.enterReady });
+  }
+  if (state.hasNextMeeting !== undefined) {
+    sendToMegingjord({
+      event: "hasNextMeeting",
+      hasNextMeeting: state.hasNextMeeting,
+    });
+  }
 }
 
 browser.runtime.onMessage.addListener((message, sender) => {

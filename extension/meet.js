@@ -88,6 +88,23 @@ function readState() {
     state.handMuted = handButton.getAttribute("aria-pressed") !== "true";
   }
 
+  if (state.phase === "greenRoom") {
+    const enterButton = firstMatch([
+      ENTER_MEETING_SELECTOR,
+      ENTER_MEETING_HOST_SELECTOR,
+    ]);
+    if (enterButton) {
+      state.enterReady = !(
+        enterButton.disabled ||
+        enterButton.getAttribute("aria-disabled") === "true"
+      );
+    }
+  } else if (state.phase === "lobby") {
+    state.hasNextMeeting = !!(
+      document.querySelector(START_NEXT_SELECTOR) || queryByText("Start")
+    );
+  }
+
   return state;
 }
 
@@ -102,13 +119,21 @@ function clickButton(selector, name) {
 }
 
 function clickByText(text) {
-  for (const element of document.querySelectorAll("button,[role=button]")) {
-    if ((element.textContent || "").trim() === text) {
-      element.click();
-      return true;
-    }
+  const element = queryByText(text);
+  if (element) {
+    element.click();
+    return true;
   }
   return false;
+}
+
+function queryByText(text) {
+  for (const element of document.querySelectorAll("button,[role=button]")) {
+    if ((element.textContent || "").trim() === text) {
+      return element;
+    }
+  }
+  return null;
 }
 
 const COMMANDS = {
@@ -128,9 +153,21 @@ const COMMANDS = {
   startNextMeeting: () =>
     clickButton(START_NEXT_SELECTOR, "start next meeting") ||
     clickByText("Start"),
-  enterMeeting: () =>
-    clickButton(ENTER_MEETING_SELECTOR, "join now") ||
-    clickButton(ENTER_MEETING_HOST_SELECTOR, "start (host)"),
+  enterMeeting: () => {
+    const button = firstMatch([
+      ENTER_MEETING_SELECTOR,
+      ENTER_MEETING_HOST_SELECTOR,
+    ]);
+    if (!button) {
+      console.warn("Megingjord Meet: button not found: join now");
+      return;
+    }
+    if (button.disabled || button.getAttribute("aria-disabled") === "true") {
+      console.warn("Megingjord Meet: join button not ready");
+      return;
+    }
+    button.click();
+  },
   rejoin: () => clickButton(REJOIN_SELECTOR, "rejoin") || clickByText("Rejoin"),
   returnHome: () =>
     clickButton(RETURN_HOME_SELECTOR, "return home") ||

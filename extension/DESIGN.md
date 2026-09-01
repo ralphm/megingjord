@@ -38,6 +38,8 @@ JSON messages over `ws://127.0.0.1:2394`.
 | `micMutedState` | `{"event": "micMutedState", "muted": bool}` | |
 | `cameraMutedState` | `{"event": "cameraMutedState", "muted": bool}` | |
 | `handMutedState` | `{"event": "handMutedState", "muted": bool}` | `muted` means hand not raised |
+| `enterReady` | `{"event": "enterReady", "ready": bool}` | Green room: join button clickable |
+| `hasNextMeeting` | `{"event": "hasNextMeeting", "hasNextMeeting": bool}` | Lobby: scheduled meeting present |
 
 ### Megingjord -> Extension
 
@@ -60,10 +62,10 @@ and state and executes commands.
 
 | Phase | Keys |
 |---|---|
-| `lobby` | start-instant, start-next |
-| `greenRoom` | enter, home |
+| `lobby` | start-instant, start-next (hidden when no scheduled meeting) |
+| `greenRoom` | mic, camera, home, enter (dimmed until join button ready) |
 | `meeting` | mic, camera, hand, leave |
-| `exitHall` | rejoin, home |
+| `exitHall` | home, rejoin |
 
 ## Multi-tab policy
 

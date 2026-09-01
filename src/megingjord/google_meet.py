@@ -6,7 +6,6 @@ Google Meet support.
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import pprint
@@ -125,12 +124,15 @@ class GoogleMeetActionKey:
 
     A key with a fixed tile that sends an event to the browser extension
     when pressed, e.g. starting a meeting, joining, leaving or returning
-    home.
+    home. Keys that require the Meet UI to be ready (e.g. joining a
+    meeting) can be marked not ready, rendering them inactive and ignoring
+    presses.
     """
 
     key: int
     meet: GoogleMeetCoordinator
     control: str
+    ready: bool = field(default=True)
 
     controller: DeckController | None = field(init=False)
     deck: StreamDeck = field(init=False)
@@ -140,18 +142,7 @@ class GoogleMeetActionKey:
         Start this key.
         """
         self.deck = deck
-
-        if self.controller:
-            event, title, icon, color = ACTION_KEYS[self.control]
-            tile = await self.controller.draw_tile(
-                title=title,
-                colors={
-                    "tile-bg": f"{color}-bg",
-                    "icon-primary": f"{color}-icon",
-                },
-                primary_icon=icon,
-            )
-            self.deck.set_key_image(self.key, tile)
+        await self._draw()
 
     async def stop(self) -> None:
         """
@@ -159,11 +150,42 @@ class GoogleMeetActionKey:
         """
         self.deck.set_key_image(self.key, None)
 
+    async def on_ready(self, ready: bool) -> None:
+        """
+        Received readiness state.
+        """
+        if ready == self.ready:
+            return
+
+        self.ready = ready
+        await self._draw()
+
+    async def _draw(self) -> None:
+        """
+        Draw the tile.
+        """
+        if not self.controller or not self.deck:
+            return
+
+        event, title, icon, color = ACTION_KEYS[self.control]
+        if not self.ready:
+            color = "google-meet-inactive"
+
+        tile = await self.controller.draw_tile(
+            title=title,
+            colors={
+                "tile-bg": f"{color}-bg",
+                "icon-primary": f"{color}-icon",
+            },
+            primary_icon=icon,
+        )
+        self.deck.set_key_image(self.key, tile)
+
     async def on_key_change(self, key_state: bool) -> None:
         """
         Called when the key got pressed or released.
         """
-        if not key_state:
+        if not key_state or not self.ready:
             return
 
         event, _title, _icon, _color = ACTION_KEYS[self.control]
@@ -177,7 +199,9 @@ class GoogleMeetCoordinator:
 
     The keys shown on the Stream Deck depend on the meeting phase reported
     by the browser extension: lobby, green room, meeting, exit hall, or
-    none when no Meet tab is open.
+    none when no Meet tab is open. Controls can additionally be hidden
+    (e.g. no scheduled meeting to start) or marked not ready (e.g. the
+    join button not yet clickable).
     """
 
     app: web.Application
@@ -188,6 +212,7 @@ class GoogleMeetCoordinator:
     states: dict[str, bool] = field(init=False, factory=dict)
     phase: str | None = field(init=False, default=None)
     control_keys: dict[str, Key] = field(init=False, factory=dict)
+    hidden_controls: set[str] = field(init=False, factory=set)
     stopping: bool = field(init=False, default=False)
 
     def __attrs_post_init__(self) -> None:
@@ -212,6 +237,24 @@ class GoogleMeetCoordinator:
 
         yield
 
+    async def _register_control(self, key: int, control: str) -> None:
+        """
+        Register a single control key.
+        """
+        if control in MUTE_CONTROLS:
+            control_key: Key = GoogleMeetMuteKey(key, self, control)
+        else:
+            control_key = GoogleMeetActionKey(key, self, control)
+
+        self.deck_controller.register_key(control_key)
+        self.control_keys[control] = control_key
+        await control_key.start(self.deck_controller.deck)
+
+        # Draw the tile from a state received before the key was registered.
+        if control in MUTE_CONTROLS and control in self.states:
+            assert isinstance(control_key, GoogleMeetMuteKey)
+            await control_key.on_state(self.states[control])
+
     async def register_phase(self, phase: str) -> None:
         """
         Register the keys for the given phase.
@@ -223,13 +266,9 @@ class GoogleMeetCoordinator:
         self.phase = phase
 
         for key, control in self.keys.get(phase, {}).items():
-            if control in MUTE_CONTROLS:
-                control_key: Key = GoogleMeetMuteKey(key, self, control)
-            else:
-                control_key = GoogleMeetActionKey(key, self, control)
-            self.deck_controller.register_key(control_key)
-            self.control_keys[control] = control_key
-            asyncio.create_task(control_key.start(self.deck_controller.deck))
+            if control in self.hidden_controls:
+                continue
+            await self._register_control(key, control)
 
     async def unregister_keys(self) -> None:
         """
@@ -241,12 +280,39 @@ class GoogleMeetCoordinator:
 
         self.control_keys = {}
 
+    async def set_control_visible(self, control: str, visible: bool) -> None:
+        """
+        Show or hide a control key.
+        """
+        if visible:
+            self.hidden_controls.discard(control)
+            if self.phase is not None and control not in self.control_keys:
+                for key, name in self.keys.get(self.phase, {}).items():
+                    if name == control:
+                        await self._register_control(key, control)
+                        break
+        else:
+            self.hidden_controls.add(control)
+            if control in self.control_keys:
+                control_key = self.control_keys.pop(control)
+                self.deck_controller.unregister_key(control_key)
+                await control_key.stop()
+
     async def handle_event(self, event: dict[str, Any]) -> None:
         """
         Handle incoming event.
         """
         if event["event"] == "phase":
             await self.register_phase(event["phase"])
+        elif event["event"] == "enterReady":
+            if "enter" in self.control_keys:
+                key = self.control_keys["enter"]
+                assert isinstance(key, GoogleMeetActionKey)
+                await key.on_ready(event["ready"])
+        elif event["event"] == "hasNextMeeting":
+            await self.set_control_visible(
+                "start-next", event["hasNextMeeting"]
+            )
         elif match := RE_MUTED_STATE.match(event["event"]):
             control = match.group(1)
             self.states[control] = event["muted"]

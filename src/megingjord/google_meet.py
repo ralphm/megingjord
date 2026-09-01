@@ -133,6 +133,7 @@ class GoogleMeetActionKey:
     meet: GoogleMeetCoordinator
     control: str
     ready: bool = field(default=True)
+    title: str | None = field(default=None)
 
     controller: DeckController | None = field(init=False)
     deck: StreamDeck = field(init=False)
@@ -160,6 +161,16 @@ class GoogleMeetActionKey:
         self.ready = ready
         await self._draw()
 
+    async def on_label(self, label: str) -> None:
+        """
+        Received label from the Meet UI.
+        """
+        if label == self.title:
+            return
+
+        self.title = label
+        await self._draw()
+
     async def _draw(self) -> None:
         """
         Draw the tile.
@@ -168,6 +179,8 @@ class GoogleMeetActionKey:
             return
 
         event, title, icon, color = ACTION_KEYS[self.control]
+        if self.title:
+            title = self.title
         if not self.ready:
             color = "google-meet-inactive"
 
@@ -309,6 +322,11 @@ class GoogleMeetCoordinator:
                 key = self.control_keys["enter"]
                 assert isinstance(key, GoogleMeetActionKey)
                 await key.on_ready(event["ready"])
+        elif event["event"] == "enterLabel":
+            if "enter" in self.control_keys:
+                key = self.control_keys["enter"]
+                assert isinstance(key, GoogleMeetActionKey)
+                await key.on_label(event["label"])
         elif event["event"] == "hasNextMeeting":
             await self.set_control_visible(
                 "start-next", event["hasNextMeeting"]

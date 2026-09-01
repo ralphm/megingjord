@@ -7,6 +7,9 @@
     "https://meet.google.com/*",
     "ws://127.0.0.1:2394/*"
   ],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; connect-src ws://127.0.0.1:2394"
+  },
   "background": {
     "scripts": ["background.js"]
   },

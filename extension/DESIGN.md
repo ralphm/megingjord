@@ -22,6 +22,10 @@ The WebSocket lives in the background script, not the content script, so it:
 - does not trigger the browser's localhost permission prompt
 - stays connected regardless of how many Meet tabs are open
 
+Note: Firefox's default Manifest V3 CSP includes `upgrade-insecure-requests`,
+which would upgrade the `ws://` connection to `wss://`. The manifest therefore
+overrides the CSP with an explicit `connect-src ws://127.0.0.1:2394`.
+
 ## Protocol
 
 JSON messages over `ws://127.0.0.1:2394`.

@@ -30,7 +30,7 @@ JSON messages over `ws://127.0.0.1:2394`.
 
 | Event | Payload | Notes |
 |---|---|---|
-| `phase` | `{"event": "phase", "phase": "lobby"\|"greenRoom"\|"meeting"\|"exitHall"}` | Sent on change and on (re)connect |
+| `phase` | `{"event": "phase", "phase": "lobby"\|"greenRoom"\|"meeting"\|"exitHall"\|"none"}` | Sent on change and on (re)connect; `none` means no Meet tab is open |
 | `micMutedState` | `{"event": "micMutedState", "muted": bool}` | |
 | `cameraMutedState` | `{"event": "cameraMutedState", "muted": bool}` | |
 | `handMutedState` | `{"event": "handMutedState", "muted": bool}` | `muted` means hand not raised |

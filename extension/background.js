@@ -28,6 +28,11 @@ function connect() {
 
   socket.onopen = () => {
     console.log("Megingjord Meet: connected to Megingjord");
+    if (tabStates.size === 0) {
+      // No Meet tabs open; make sure Megingjord does not keep stale keys.
+      sendToMegingjord({ event: "phase", phase: "none" });
+      return;
+    }
     // Ask every Meet tab for its current state; the best tab's state will
     // be forwarded once the responses come in.
     for (const tabId of tabStates.keys()) {
@@ -118,6 +123,11 @@ browser.runtime.onMessage.addListener((message, sender) => {
 
 browser.tabs.onRemoved.addListener((tabId) => {
   tabStates.delete(tabId);
+  if (tabStates.size === 0) {
+    // Last Meet tab closed; tell Megingjord to drop the Meet keys.
+    sendToMegingjord({ event: "phase", phase: "none" });
+    return;
+  }
   // The best tab may have changed; forward the new best tab's state.
   const best = bestTabId();
   if (best !== null) {

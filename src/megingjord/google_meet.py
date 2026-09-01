@@ -24,6 +24,8 @@ logger = logging.getLogger(__name__)
 
 RE_MUTED_STATE = re.compile(r"^(.*)MutedState$")
 
+MUTE_CONTROLS = ("mic", "camera", "hand")
+
 MUTE_ICON_COLOR = {
     ("mic", False): ("microphone", "google-meet-unmuted"),
     ("mic", True): ("microphone-off", "google-meet-muted"),
@@ -31,6 +33,31 @@ MUTE_ICON_COLOR = {
     ("camera", True): ("video-off-outline", "google-meet-muted"),
     ("hand", False): ("hand-back-right-outline", "google-meet-active"),
     ("hand", True): ("hand-back-right-outline", "google-meet-inactive"),
+}
+
+# Control name -> (event, title, icon, color)
+ACTION_KEYS = {
+    "start-instant": (
+        "startInstantMeeting",
+        "Start instant",
+        "video-plus",
+        "google-meet-active",
+    ),
+    "start-next": (
+        "startNextMeeting",
+        "Start next",
+        "calendar-plus",
+        "google-meet-active",
+    ),
+    "enter": ("enterMeeting", "Join now", "login", "google-meet-active"),
+    "home": ("returnHome", "Home", "home", "google-meet-inactive"),
+    "rejoin": ("rejoin", "Rejoin", "replay", "google-meet-active"),
+    "hangup": (
+        "leaveCall",
+        "Leave call",
+        "phone-hangup",
+        "google-meet-hangup",
+    ),
 }
 
 
@@ -92,9 +119,13 @@ class GoogleMeetMuteKey:
 
 
 @define
-class GoogleMeetLeaveKey:
+class GoogleMeetActionKey:
     """
-    Google Meet Leave Key.
+    Google Meet Action Key.
+
+    A key with a fixed tile that sends an event to the browser extension
+    when pressed, e.g. starting a meeting, joining, leaving or returning
+    home.
     """
 
     key: int
@@ -111,13 +142,14 @@ class GoogleMeetLeaveKey:
         self.deck = deck
 
         if self.controller:
+            event, title, icon, color = ACTION_KEYS[self.control]
             tile = await self.controller.draw_tile(
-                title="Leave call",
+                title=title,
                 colors={
-                    "tile-bg": "google-meet-hangup-bg",
-                    "icon-primary": "google-meet-hangup-icon",
+                    "tile-bg": f"{color}-bg",
+                    "icon-primary": f"{color}-icon",
                 },
-                primary_icon="phone-hangup",
+                primary_icon=icon,
             )
             self.deck.set_key_image(self.key, tile)
 
@@ -134,21 +166,27 @@ class GoogleMeetLeaveKey:
         if not key_state:
             return
 
-        await self.meet.send_event({"event": "leaveCall"})
+        event, _title, _icon, _color = ACTION_KEYS[self.control]
+        await self.meet.send_event({"event": event})
 
 
 @define
 class GoogleMeetCoordinator:
     """
     Coordinator for Google Meet calls.
+
+    The keys shown on the Stream Deck depend on the meeting phase reported
+    by the browser extension: lobby, green room, meeting, exit hall, or
+    none when no Meet tab is open.
     """
 
     app: web.Application
     deck_controller: DeckController
-    keys: dict[int, str]
+    keys: dict[str, dict[int, str]]
 
     socket: web.WebSocketResponse | None = field(init=False, default=None)
     states: dict[str, bool] = field(init=False, factory=dict)
+    phase: str | None = field(init=False, default=None)
     control_keys: dict[str, Key] = field(init=False, factory=dict)
     stopping: bool = field(init=False, default=False)
 
@@ -174,16 +212,21 @@ class GoogleMeetCoordinator:
 
         yield
 
-    async def register_keys(self) -> None:
+    async def register_phase(self, phase: str) -> None:
         """
-        Register keys with Stream Deck.
+        Register the keys for the given phase.
         """
-        control_key: GoogleMeetLeaveKey | GoogleMeetMuteKey
-        for key, control in self.keys.items():
-            if control == "hangup":
-                control_key = GoogleMeetLeaveKey(key, self, control)
+        if phase == self.phase:
+            return
+
+        await self.unregister_keys()
+        self.phase = phase
+
+        for key, control in self.keys.get(phase, {}).items():
+            if control in MUTE_CONTROLS:
+                control_key: Key = GoogleMeetMuteKey(key, self, control)
             else:
-                control_key = GoogleMeetMuteKey(key, self, control)
+                control_key = GoogleMeetActionKey(key, self, control)
             self.deck_controller.register_key(control_key)
             self.control_keys[control] = control_key
             asyncio.create_task(control_key.start(self.deck_controller.deck))
@@ -202,7 +245,9 @@ class GoogleMeetCoordinator:
         """
         Handle incoming event.
         """
-        if match := RE_MUTED_STATE.match(event["event"]):
+        if event["event"] == "phase":
+            await self.register_phase(event["phase"])
+        elif match := RE_MUTED_STATE.match(event["event"]):
             control = match.group(1)
             self.states[control] = event["muted"]
             if control in self.control_keys:
@@ -235,8 +280,7 @@ class GoogleMeetCoordinator:
         logger.info("Websocket connection established")
         self.socket = ws
         self.states = {}
-
-        await self.register_keys()
+        self.phase = None
 
         async for msg in ws:
             logger.debug(f"Received message {msg}")
@@ -257,6 +301,7 @@ class GoogleMeetCoordinator:
         self.socket = None
 
         await self.unregister_keys()
+        self.phase = None
 
         return ws
 

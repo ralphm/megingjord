@@ -51,7 +51,7 @@ const LEAVE_SELECTOR = '[jsname="CQylAd"]'; // verified: meeting
 const LEAVE_CONFIRMATION_SELECTOR = '[data-mdc-dialog-action="Pd96ce"]';
 
 const START_INSTANT_SELECTOR = '[jsname="CuSyi"]'; // verified: lobby
-const START_NEXT_SELECTOR = '[jsname="PoaP2b"]'; // verified: lobby, first scheduled meeting card
+const SCHEDULED_SECTION_SELECTOR = 'SECTION[jsname="n39Uf"]'; // verified: lobby
 const ENTER_MEETING_SELECTOR = '[jsname="Qx7uuf"]'; // verified: green room
 const ENTER_MEETING_HOST_SELECTOR = '[jsname="z0F4cd"]'; // verified: green room (host)
 const REJOIN_SELECTOR = '[jsname="W6suGc"]'; // verified: exit hall
@@ -88,6 +88,21 @@ function isDisabled(element) {
   );
 }
 
+// The first future meeting card in the Scheduled section. In-progress
+// meetings have a Join button on the card; future ones do not.
+function firstFutureScheduledCard() {
+  const section = document.querySelector(SCHEDULED_SECTION_SELECTOR);
+  if (!section) {
+    return null;
+  }
+  for (const card of section.querySelectorAll('[jsname="PoaP2b"]')) {
+    if (!card.querySelector('button[jsname="Dq2Egc"]')) {
+      return card;
+    }
+  }
+  return null;
+}
+
 function readState() {
   const state = { phase: detectPhase() };
 
@@ -114,7 +129,7 @@ function readState() {
       state.enterLabel = (enterButton.textContent || "").trim();
     }
   } else if (state.phase === "lobby") {
-    state.hasNextMeeting = !!document.querySelector(START_NEXT_SELECTOR);
+    state.hasNextMeeting = !!firstFutureScheduledCard();
   }
 
   return state;
@@ -162,9 +177,14 @@ const COMMANDS = {
   startInstantMeeting: () =>
     clickButton(START_INSTANT_SELECTOR, "start instant meeting") ||
     clickButton('[aria-label="New meeting"]', "new meeting"),
-  startNextMeeting: () =>
-    clickButton(START_NEXT_SELECTOR, "start next meeting") ||
-    clickByText("Start"),
+  startNextMeeting: () => {
+    const card = firstFutureScheduledCard();
+    if (card) {
+      card.click();
+      return;
+    }
+    console.warn("Megingjord Meet: button not found: start next meeting");
+  },
   enterMeeting: () => {
     const button = getJoinButton();
     if (!button) {

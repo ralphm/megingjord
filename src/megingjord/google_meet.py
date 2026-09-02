@@ -40,18 +40,18 @@ ACTION_KEYS = {
     "start-instant": (
         "startInstantMeeting",
         "Start instant",
-        "video-plus",
-        "google-meet-active",
+        "video-plus-outline",
+        "google-meet-secondary",
     ),
     "start-next": (
         "startNextMeeting",
         "Start next",
-        "calendar-plus",
+        "calendar-clock-outline",
         "google-meet-active",
     ),
     "enter": ("enterMeeting", "Join now", "login", "google-meet-active"),
-    "home": ("returnHome", "Home", "home", "google-meet-inactive"),
-    "rejoin": ("rejoin", "Rejoin", "replay", "google-meet-active"),
+    "home": ("returnHome", "Home", "home", "google-meet-active"),
+    "rejoin": ("rejoin", "Rejoin", "replay", "google-meet-secondary"),
     "hangup": (
         "leaveCall",
         "Leave call",

@@ -64,7 +64,7 @@ and state and executes commands.
 
 | Phase | Keys |
 |---|---|
-| `lobby` | start-instant, start-next (hidden when no scheduled meeting) |
+| `lobby` | start-instant, start-next (calendar-remove icon when no scheduled meeting) |
 | `greenRoom` | mic, camera, home, enter (dimmed until join button ready) |
 | `meeting` | mic, camera, hand, leave |
 | `exitHall` | home, rejoin |

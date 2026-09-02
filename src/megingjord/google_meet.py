@@ -61,6 +61,10 @@ ACTION_KEYS = {
 }
 
 
+# Icon shown when a control is unavailable, e.g. no scheduled meeting.
+UNAVAILABLE_ICONS = {"start-next": "calendar-remove"}
+
+
 @define
 class GoogleMeetMuteKey:
     """
@@ -79,6 +83,26 @@ class GoogleMeetMuteKey:
         Start this key.
         """
         self.deck = deck
+        await self._draw_not_ready()
+
+    async def _draw_not_ready(self) -> None:
+        """
+        Draw the tile in the not-ready state, until the real state arrives.
+        """
+        if not self.controller or not self.deck:
+            return
+
+        icon, _color = MUTE_ICON_COLOR[(self.control, False)]
+        tile = await self.controller.draw_tile(
+            title=self.control,
+            colors={
+                "tile-fg": "google-meet-fg",
+                "tile-bg": "tile-inactive-bg",
+                "icon-primary": "icon-inactive",
+            },
+            primary_icon=icon,
+        )
+        self.deck.set_key_image(self.key, tile)
 
     async def stop(self) -> None:
         """
@@ -134,6 +158,7 @@ class GoogleMeetActionKey:
     meet: GoogleMeetCoordinator
     control: str
     ready: bool = field(default=True)
+    available: bool = field(default=True)
     title: str | None = field(default=None)
     subtitle: str | None = field(default=None)
 
@@ -161,6 +186,16 @@ class GoogleMeetActionKey:
             return
 
         self.ready = ready
+        await self._draw()
+
+    async def on_available(self, available: bool) -> None:
+        """
+        Received availability state.
+        """
+        if available == self.available:
+            return
+
+        self.available = available
         await self._draw()
 
     async def on_label(self, label: str) -> None:
@@ -193,20 +228,28 @@ class GoogleMeetActionKey:
         event, title, icon, color = ACTION_KEYS[self.control]
         if self.title:
             title = self.title
-        if not self.ready:
-            color = "google-meet-inactive"
 
         subtitle = None
-        if self.subtitle:
+        if self.subtitle and self.available:
             subtitle = textwrap.shorten(self.subtitle, 20, placeholder="…")
+
+        if not self.ready or not self.available:
+            colors = {
+                "tile-bg": "tile-inactive-bg",
+                "icon-primary": "icon-inactive",
+            }
+            if not self.available:
+                icon = UNAVAILABLE_ICONS.get(self.control, icon)
+        else:
+            colors = {
+                "tile-bg": f"{color}-bg",
+                "icon-primary": f"{color}-icon",
+            }
 
         tile = await self.controller.draw_tile(
             title=title,
             subtitle=subtitle,
-            colors={
-                "tile-bg": f"{color}-bg",
-                "icon-primary": f"{color}-icon",
-            },
+            colors=colors,
             primary_icon=icon,
         )
         self.deck.set_key_image(self.key, tile)
@@ -215,7 +258,7 @@ class GoogleMeetActionKey:
         """
         Called when the key got pressed or released.
         """
-        if not key_state or not self.ready:
+        if not key_state or not self.ready or not self.available:
             return
 
         event, _title, _icon, _color = ACTION_KEYS[self.control]
@@ -242,7 +285,7 @@ class GoogleMeetCoordinator:
     states: dict[str, bool] = field(init=False, factory=dict)
     phase: str | None = field(init=False, default=None)
     control_keys: dict[str, Key] = field(init=False, factory=dict)
-    hidden_controls: set[str] = field(init=False, factory=set)
+    unavailable_controls: set[str] = field(init=False, factory=set)
     stopping: bool = field(init=False, default=False)
 
     def __attrs_post_init__(self) -> None:
@@ -274,16 +317,16 @@ class GoogleMeetCoordinator:
         if control in MUTE_CONTROLS:
             control_key: Key = GoogleMeetMuteKey(key, self, control)
         else:
-            control_key = GoogleMeetActionKey(key, self, control)
+            control_key = GoogleMeetActionKey(
+                key,
+                self,
+                control,
+                available=control not in self.unavailable_controls,
+            )
 
         self.deck_controller.register_key(control_key)
         self.control_keys[control] = control_key
         await control_key.start(self.deck_controller.deck)
-
-        # Draw the tile from a state received before the key was registered.
-        if control in MUTE_CONTROLS and control in self.states:
-            assert isinstance(control_key, GoogleMeetMuteKey)
-            await control_key.on_state(self.states[control])
 
     async def register_phase(self, phase: str) -> None:
         """
@@ -294,10 +337,9 @@ class GoogleMeetCoordinator:
 
         await self.unregister_keys()
         self.phase = phase
+        self.states = {}
 
         for key, control in self.keys.get(phase, {}).items():
-            if control in self.hidden_controls:
-                continue
             await self._register_control(key, control)
 
     async def unregister_keys(self) -> None:
@@ -310,23 +352,21 @@ class GoogleMeetCoordinator:
 
         self.control_keys = {}
 
-    async def set_control_visible(self, control: str, visible: bool) -> None:
+    async def set_control_available(
+        self, control: str, available: bool
+    ) -> None:
         """
-        Show or hide a control key.
+        Mark a control as available or not.
         """
-        if visible:
-            self.hidden_controls.discard(control)
-            if self.phase is not None and control not in self.control_keys:
-                for key, name in self.keys.get(self.phase, {}).items():
-                    if name == control:
-                        await self._register_control(key, control)
-                        break
+        if available:
+            self.unavailable_controls.discard(control)
         else:
-            self.hidden_controls.add(control)
-            if control in self.control_keys:
-                control_key = self.control_keys.pop(control)
-                self.deck_controller.unregister_key(control_key)
-                await control_key.stop()
+            self.unavailable_controls.add(control)
+
+        if control in self.control_keys:
+            key = self.control_keys[control]
+            assert isinstance(key, GoogleMeetActionKey)
+            await key.on_available(available)
 
     async def handle_event(self, event: dict[str, Any]) -> None:
         """
@@ -351,7 +391,7 @@ class GoogleMeetCoordinator:
                 assert isinstance(key, GoogleMeetActionKey)
                 await key.on_subtitle(event["subtitle"])
         elif event["event"] == "hasNextMeeting":
-            await self.set_control_visible(
+            await self.set_control_available(
                 "start-next", event["hasNextMeeting"]
             )
         elif match := RE_MUTED_STATE.match(event["event"]):

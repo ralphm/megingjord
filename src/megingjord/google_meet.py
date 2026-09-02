@@ -62,7 +62,14 @@ ACTION_KEYS = {
 
 
 # Icon shown when a control is unavailable, e.g. no scheduled meeting.
-UNAVAILABLE_ICONS = {"start-next": "calendar-remove"}
+UNAVAILABLE_ICONS = {"start-next": "calendar-remove-outline"}
+
+# Icon shown for mute keys while the state is not yet known.
+NOT_READY_ICONS = {
+    "mic": "microphone",
+    "camera": "video-outline",
+    "hand": "hand-back-right-off-outline",
+}
 
 
 @define
@@ -92,7 +99,7 @@ class GoogleMeetMuteKey:
         if not self.controller or not self.deck:
             return
 
-        icon, _color = MUTE_ICON_COLOR[(self.control, False)]
+        icon = NOT_READY_ICONS[self.control]
         tile = await self.controller.draw_tile(
             title=self.control,
             colors={

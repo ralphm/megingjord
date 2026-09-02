@@ -66,8 +66,8 @@ UNAVAILABLE_ICONS = {"start-next": "calendar-remove-outline"}
 
 # Icon shown for mute keys while the state is not yet known.
 NOT_READY_ICONS = {
-    "mic": "microphone",
-    "camera": "video-outline",
+    "mic": "microphone-off",
+    "camera": "video-off-outline",
     "hand": "hand-back-right-off-outline",
 }
 

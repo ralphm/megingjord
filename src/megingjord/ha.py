@@ -154,6 +154,7 @@ class HAWebSocketClient:
         await self.client.subscribe_events(self._on_event, "state_changed")
         self._connected = True
         logger.info("Connected to Home Assistant")
+        await self._notify_states()
 
         try:
             await self.client.start_listening()
@@ -208,6 +209,15 @@ class HAWebSocketClient:
 
         for callback in callbacks:
             self._spawn(callback, None)
+
+    async def _notify_states(self) -> None:
+        """
+        Notify all subscribers of their current state.
+        """
+        for entity_id, callbacks in self.subscribers.items():
+            state = self.states.get(entity_id)
+            for callback in list(callbacks):
+                self._spawn(callback, state)
 
     def subscribe(
         self,

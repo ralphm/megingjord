@@ -215,25 +215,23 @@ class TestHAWebSocketClient:
         self, ha_client: tuple[HAWebSocketClient, MagicMock]
     ) -> None:
         """
-        Connecting fetches states, subscribes and notifies on disconnect.
+        Connecting fetches states, subscribes and notifies subscribers.
         """
         client, mock_class = ha_client
         mock = mock_class.return_value
         mock.connect = AsyncMock()
-        mock.get_states = AsyncMock(
-            return_value=[
-                {"entity_id": "light.test", "state": "off", "attributes": {}}
-            ]
-        )
+        state = {"entity_id": "light.test", "state": "off", "attributes": {}}
+        mock.get_states = AsyncMock(return_value=[state])
         mock.subscribe_events = AsyncMock()
         mock.start_listening = AsyncMock()
 
-        notified = asyncio.Event()
+        done = asyncio.Event()
         states: list[dict | None] = []
 
         async def on_state(state: dict | None) -> None:
             states.append(state)
-            notified.set()
+            if len(states) == 2:
+                done.set()
 
         client.subscribe("light.test", on_state)
 
@@ -245,8 +243,8 @@ class TestHAWebSocketClient:
         assert mock.subscribe_events.call_args.args[1] == "state_changed"
         assert client.connected is False
         assert client.get_state("light.test") is None
-        await asyncio.wait_for(notified.wait(), 1)
-        assert states == [None]
+        await asyncio.wait_for(done.wait(), 1)
+        assert states == [state, None]
 
     @pytest.mark.asyncio
     async def test_connect_connected_state(

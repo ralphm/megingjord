@@ -798,10 +798,11 @@ class TestHAEntityDial:
         }
         assert dial._get_value(state) == 0.7
 
-    def test_get_value_unknown(self, dial: HAEntityDial) -> None:
+    def test_get_value_unknown(self) -> None:
         """
         An unsupported domain yields zero.
         """
+        dial = make_dial("switch.test", None)
         state = {"entity_id": "switch.test", "state": "on", "attributes": {}}
         assert dial._get_value(state) == 0.0
 
@@ -887,3 +888,67 @@ class TestHAEntityDial:
         dial.ha.call_service = AsyncMock()
         await dial._set_value(0.5)
         dial.ha.call_service.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_set_value_unknown(self) -> None:
+        """
+        Setting a value for an unsupported domain does nothing.
+        """
+        dial = make_dial(
+            "switch.test",
+            {"entity_id": "switch.test", "state": "on", "attributes": {}},
+        )
+        dial.ha.call_service = AsyncMock()
+        await dial._set_value(0.5)
+        dial.ha.call_service.assert_not_called()
+
+    def test_on_event_no_entity(
+        self, ha_client: tuple[HAWebSocketClient, MagicMock]
+    ) -> None:
+        """
+        An event without an entity id is ignored.
+        """
+        client, _ = ha_client
+        client._on_event({"event_type": "state_changed", "data": {}})
+        assert client.states == {}
+
+    @pytest.mark.asyncio
+    async def test_stop_no_controller(self, dial: HAEntityDial) -> None:
+        """
+        Stopping without a controller does not render the LCD.
+        """
+        dial.controller = None
+        await dial.stop()
+
+    @pytest.mark.asyncio
+    async def test_on_state_no_controller(self, dial: HAEntityDial) -> None:
+        """
+        A state change without a controller does not render the LCD.
+        """
+        dial.controller = None
+        await dial.on_state(None)
+
+    @pytest.mark.asyncio
+    async def test_on_dial_turn_no_controller(
+        self, dial: HAEntityDial
+    ) -> None:
+        """
+        Turning the dial without a controller does nothing.
+        """
+        dial.controller = None
+        await dial.on_dial_turn(1)
+        dial.ha.call_service.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_on_dial_turn_error(self, dial: HAEntityDial) -> None:
+        """
+        A failed value set still renders the LCD.
+        """
+        dial.ha.get_state.return_value = {
+            "entity_id": "number.test",
+            "state": "50",
+            "attributes": {"min": 0, "max": 100},
+        }
+        dial.ha.call_service = AsyncMock(side_effect=Exception("boom"))
+        await dial.on_dial_turn(1)
+        dial.controller.render_lcd.assert_awaited_once_with(tile_changed=0)

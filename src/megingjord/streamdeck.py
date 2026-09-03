@@ -453,8 +453,8 @@ class DeckController:
                     icon=badge,
                     color=get_color("icon-warning"),
                     size=24,
-                    pos_x=90,
-                    pos_y=6,
+                    pos_x=80,
+                    pos_y=16,
                 )
             )
 

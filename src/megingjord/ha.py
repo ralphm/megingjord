@@ -336,7 +336,7 @@ class HAEntityTile:
 
         if state is None:
             text = "Disconnected"
-            icon = get_entity_icon(self.entity_id, {})
+            icon = "cloud-question-outline"
             colors = {
                 "icon-primary": "icon-inactive",
                 "tile-bg": "tile-inactive-bg",

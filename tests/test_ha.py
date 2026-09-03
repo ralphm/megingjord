@@ -540,7 +540,7 @@ class TestHAEntityTile:
         tile.controller.draw_tile.assert_awaited_once_with(
             "Disconnected",
             {"icon-primary": "icon-inactive", "tile-bg": "tile-inactive-bg"},
-            "lightbulb",
+            "cloud-question-outline",
         )
 
     @pytest.mark.asyncio

@@ -723,6 +723,20 @@ class TestHAEntityDial:
         dial.controller.draw_dial_tile.assert_awaited_once()
 
     @pytest.mark.asyncio
+    async def test_start_with_state(self, dial: HAEntityDial) -> None:
+        """
+        Starting with a state initializes the value.
+        """
+        dial.ha.get_state.return_value = {
+            "entity_id": "number.test",
+            "state": "50",
+            "attributes": {"min": 0, "max": 100},
+        }
+        await dial.start(dial.deck)
+        assert dial.value == 0.5
+        dial.controller.draw_dial_tile.assert_awaited_once()
+
+    @pytest.mark.asyncio
     async def test_stop(self, dial: HAEntityDial) -> None:
         """
         Stopping unsubscribes and renders the LCD.
@@ -1368,3 +1382,45 @@ class TestCallbackErrors:
             )
             await asyncio.sleep(0.05)
         assert "Error in state callback for light.test" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_callback_cancelled(
+        self, ha_client: tuple[HAWebSocketClient, MagicMock]
+    ) -> None:
+        """
+        A cancelled callback task is ignored.
+        """
+        client, _ = ha_client
+
+        async def slow(state: dict | None) -> None:
+            await asyncio.sleep(1)
+
+        client.subscribe("light.test", slow)
+        client._notify(
+            "light.test", {"entity_id": "light.test", "state": "on"}
+        )
+        await asyncio.sleep(0.01)
+        for task in list(client.tasks):
+            task.cancel()
+        await asyncio.sleep(0.01)
+        assert client.tasks == set()
+
+    @pytest.mark.asyncio
+    async def test_callback_error_no_entity(
+        self,
+        ha_client: tuple[HAWebSocketClient, MagicMock],
+        caplog: Any,
+    ) -> None:
+        """
+        A failing disconnect callback logs an error without an entity.
+        """
+        client, _ = ha_client
+
+        async def boom(state: dict | None) -> None:
+            raise Exception("boom")
+
+        client.subscribe("light.test", boom)
+        with caplog.at_level(logging.ERROR, logger="megingjord.ha"):
+            await client._notify_all()
+            await asyncio.sleep(0.05)
+        assert "Error in state callback" in caplog.text

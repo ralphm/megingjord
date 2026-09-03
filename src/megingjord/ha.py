@@ -93,7 +93,7 @@ class HAWebSocketClient:
     token: str
     retry_delay: float = field(default=10.0)
 
-    client: HomeAssistantClient = field(init=False)
+    client: HomeAssistantClient | None = field(init=False, default=None)
     states: dict[str, dict[str, Any]] = field(init=False, factory=dict)
     subscribers: dict[
         str, set[Callable[[dict[str, Any] | None], Coroutine[Any, Any, None]]]
@@ -103,7 +103,6 @@ class HAWebSocketClient:
     _connected: bool = field(init=False, default=False)
 
     def __attrs_post_init__(self) -> None:
-        self.client = HomeAssistantClient(self.url, self.token)
         self.app.cleanup_ctx.append(self.start)
 
     @property
@@ -116,7 +115,11 @@ class HAWebSocketClient:
     async def start(self, _app: web.Application) -> AsyncIterator[None]:
         """
         Start the client.
+
+        The hass_client object requires a running event loop, so it is
+        created here rather than at construction time.
         """
+        self.client = HomeAssistantClient(self.url, self.token)
         self.task = asyncio.create_task(self.run())
 
         yield
@@ -144,6 +147,7 @@ class HAWebSocketClient:
         """
         Connect to Home Assistant and process messages until disconnected.
         """
+        assert self.client is not None
         await self.client.connect()
         states = await self.client.get_states()
         self.states = {state["entity_id"]: state for state in states}
@@ -239,6 +243,9 @@ class HAWebSocketClient:
         """
         Call a Home Assistant service.
         """
+        if self.client is None:
+            raise RuntimeError("Not connected to Home Assistant")
+
         kwargs: dict[str, Any] = {}
         if entity_id is not None:
             kwargs["target"] = {"entity_id": entity_id}

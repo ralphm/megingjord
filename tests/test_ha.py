@@ -123,6 +123,7 @@ def ha_client() -> tuple[HAWebSocketClient, MagicMock]:
         client = HAWebSocketClient(
             web.Application(), "ws://ha.local/api/websocket", "token"
         )
+        client.client = mock_class.return_value
         yield client, mock_class
 
 
@@ -131,19 +132,19 @@ class TestHAWebSocketClient:
     Tests for L{megingjord.ha.HAWebSocketClient}.
     """
 
-    def test_init(
-        self, ha_client: tuple[HAWebSocketClient, MagicMock]
-    ) -> None:
+    def test_init(self) -> None:
         """
-        The client wraps hass_client and registers a cleanup context.
+        The client registers a cleanup context without creating a client.
         """
-        client, mock_class = ha_client
-        mock_class.assert_called_once_with(
-            "ws://ha.local/api/websocket", "token"
-        )
-        assert client.connected is False
-        assert client.get_state("light.test") is None
-        assert client.start in client.app.cleanup_ctx
+        with patch("megingjord.ha.HomeAssistantClient") as mock_class:
+            client = HAWebSocketClient(
+                web.Application(), "ws://ha.local/api/websocket", "token"
+            )
+            mock_class.assert_not_called()
+            assert client.client is None
+            assert client.connected is False
+            assert client.get_state("light.test") is None
+            assert client.start in client.app.cleanup_ctx
 
     def test_subscribe(
         self, ha_client: tuple[HAWebSocketClient, MagicMock]
@@ -196,6 +197,18 @@ class TestHAWebSocketClient:
         mock.call_service = AsyncMock()
         await client.call_service("homeassistant", "toggle")
         mock.call_service.assert_awaited_once_with("homeassistant", "toggle")
+
+    @pytest.mark.asyncio
+    async def test_call_service_not_connected(
+        self, ha_client: tuple[HAWebSocketClient, MagicMock]
+    ) -> None:
+        """
+        A service call without a client raises an error.
+        """
+        client, _ = ha_client
+        client.client = None
+        with pytest.raises(RuntimeError):
+            await client.call_service("homeassistant", "toggle")
 
     @pytest.mark.asyncio
     async def test_connect(
@@ -396,7 +409,7 @@ class TestHAWebSocketClient:
         self, ha_client: tuple[HAWebSocketClient, MagicMock]
     ) -> None:
         """
-        The cleanup context starts and stops the client.
+        The cleanup context creates the client, starts and stops it.
         """
         client, mock_class = ha_client
         mock = mock_class.return_value
@@ -409,6 +422,10 @@ class TestHAWebSocketClient:
 
         gen = client.start(web.Application())
         await gen.__anext__()
+        mock_class.assert_called_once_with(
+            "ws://ha.local/api/websocket", "token"
+        )
+        assert client.client is mock
         assert client.task is not None
         with pytest.raises(StopAsyncIteration):
             await gen.__anext__()

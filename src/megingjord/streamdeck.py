@@ -373,13 +373,15 @@ class DeckController:
         primary_icon: str | None = None,
         secondary_icon: str | None = None,
         subtitle: str | None = None,
+        badge: str | None = None,
     ) -> bytes:
         """
         Draw a tile with a text, and optional icons.
 
         If there's only a primary icon, it will be rendered large and centered.
         If there's a secondary icon, the primary icon is rendered to the lower
-        right, overlapping the smaller icon to the upper left.
+        right, overlapping the smaller icon to the upper left. A badge is
+        rendered as a small icon in the top right corner.
         """
 
         tile = SVG(width=120, height=120)
@@ -442,6 +444,17 @@ class DeckController:
                     text_anchor="middle",
                     font_family="sans",
                     fill=get_color("tile-fg"),
+                )
+            )
+
+        if badge:
+            tile.append(
+                await svg_icon(
+                    icon=badge,
+                    color=get_color("icon-warning"),
+                    size=24,
+                    pos_x=90,
+                    pos_y=6,
                 )
             )
 

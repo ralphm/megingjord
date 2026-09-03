@@ -3,6 +3,8 @@ Tests for L{megingjord.ha}.
 """
 
 import asyncio
+import logging
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -14,6 +16,7 @@ from megingjord.ha import (
     HAEntityTile,
     HAWebSocketClient,
     get_entity_icon,
+    get_state_text,
     normalize_url,
 )
 
@@ -215,15 +218,18 @@ class TestHAWebSocketClient:
         self, ha_client: tuple[HAWebSocketClient, MagicMock]
     ) -> None:
         """
-        Connecting fetches states, subscribes and notifies subscribers.
+        Connecting subscribes per entity and notifies subscribers.
         """
         client, mock_class = ha_client
         mock = mock_class.return_value
         mock.connect = AsyncMock()
-        state = {"entity_id": "light.test", "state": "off", "attributes": {}}
-        mock.get_states = AsyncMock(return_value=[state])
-        mock.subscribe_events = AsyncMock()
         mock.start_listening = AsyncMock()
+
+        async def subscribe_entities(cb, entity_ids):
+            cb({"a": {"light.test": {"s": "off", "a": {}}}})
+            return lambda: None
+
+        mock.subscribe_entities = AsyncMock(side_effect=subscribe_entities)
 
         done = asyncio.Event()
         states: list[dict | None] = []
@@ -238,13 +244,22 @@ class TestHAWebSocketClient:
         await client._connect()
 
         mock.connect.assert_awaited_once()
-        mock.get_states.assert_awaited_once()
-        mock.subscribe_events.assert_awaited_once()
-        assert mock.subscribe_events.call_args.args[1] == "state_changed"
+        mock.subscribe_entities.assert_awaited_once()
+        assert mock.subscribe_entities.call_args.args[1] == ["light.test"]
         assert client.connected is False
         assert client.get_state("light.test") is None
         await asyncio.wait_for(done.wait(), 1)
-        assert states == [state, None]
+        assert states == [
+            {
+                "entity_id": "light.test",
+                "state": "off",
+                "attributes": {},
+                "context": None,
+                "last_changed": None,
+                "last_updated": None,
+            },
+            None,
+        ]
 
     @pytest.mark.asyncio
     async def test_connect_connected_state(
@@ -256,12 +271,12 @@ class TestHAWebSocketClient:
         client, mock_class = ha_client
         mock = mock_class.return_value
         mock.connect = AsyncMock()
-        mock.get_states = AsyncMock(
-            return_value=[
-                {"entity_id": "light.test", "state": "off", "attributes": {}}
-            ]
-        )
-        mock.subscribe_events = AsyncMock()
+
+        async def subscribe_entities(cb, entity_ids):
+            cb({"a": {"light.test": {"s": "off", "a": {}}}})
+            return lambda: None
+
+        mock.subscribe_entities = AsyncMock(side_effect=subscribe_entities)
 
         listening = asyncio.Event()
         release = asyncio.Event()
@@ -272,6 +287,11 @@ class TestHAWebSocketClient:
 
         mock.start_listening = start_listening
 
+        async def on_state(state: dict | None) -> None:
+            pass
+
+        client.subscribe("light.test", on_state)
+
         task = asyncio.create_task(client._connect())
         await asyncio.wait_for(listening.wait(), 1)
         assert client.connected is True
@@ -279,17 +299,20 @@ class TestHAWebSocketClient:
             "entity_id": "light.test",
             "state": "off",
             "attributes": {},
+            "context": None,
+            "last_changed": None,
+            "last_updated": None,
         }
         release.set()
         await task
         assert client.connected is False
 
     @pytest.mark.asyncio
-    async def test_on_event(
+    async def test_on_entity_event_added(
         self, ha_client: tuple[HAWebSocketClient, MagicMock]
     ) -> None:
         """
-        A state_changed event updates the state and notifies subscribers.
+        An added entity state is expanded and notifies subscribers.
         """
         client, _ = ha_client
         notified = asyncio.Event()
@@ -300,33 +323,74 @@ class TestHAWebSocketClient:
             notified.set()
 
         client.subscribe("light.test", on_state)
-        client._on_event(
-            {
-                "event_type": "state_changed",
-                "data": {
-                    "entity_id": "light.test",
-                    "new_state": {"entity_id": "light.test", "state": "on"},
-                },
-            }
+        client._on_entity_event(
+            {"a": {"light.test": {"s": "on", "a": {"brightness": 128}}}}
         )
         await asyncio.wait_for(notified.wait(), 1)
-        assert states == [{"entity_id": "light.test", "state": "on"}]
-        assert client.get_state("light.test") == {
-            "entity_id": "light.test",
-            "state": "on",
-        }
+        state = client.get_state("light.test")
+        assert state is not None
+        assert state["state"] == "on"
+        assert state["attributes"] == {"brightness": 128}
+        assert states == [state]
 
     @pytest.mark.asyncio
-    async def test_on_event_removed(
+    async def test_on_entity_event_changed(
         self, ha_client: tuple[HAWebSocketClient, MagicMock]
     ) -> None:
         """
-        A removed entity state clears the state and notifies subscribers.
+        A state change diff is merged into the cached state.
         """
         client, _ = ha_client
         client.states["light.test"] = {
             "entity_id": "light.test",
             "state": "on",
+            "attributes": {"brightness": 128},
+        }
+        client._on_entity_event({"c": {"light.test": {"+": {"s": "off"}}}})
+        state = client.get_state("light.test")
+        assert state is not None
+        assert state["state"] == "off"
+        assert state["attributes"] == {"brightness": 128}
+
+    @pytest.mark.asyncio
+    async def test_on_entity_event_attributes(
+        self, ha_client: tuple[HAWebSocketClient, MagicMock]
+    ) -> None:
+        """
+        Attribute additions and removals are applied.
+        """
+        client, _ = ha_client
+        client.states["light.test"] = {
+            "entity_id": "light.test",
+            "state": "on",
+            "attributes": {"brightness": 128},
+        }
+        client._on_entity_event(
+            {
+                "c": {
+                    "light.test": {
+                        "+": {"a": {"color_temp": 300}},
+                        "-": {"a": ["brightness"]},
+                    }
+                }
+            }
+        )
+        state = client.get_state("light.test")
+        assert state is not None
+        assert state["attributes"] == {"color_temp": 300}
+
+    @pytest.mark.asyncio
+    async def test_on_entity_event_removed(
+        self, ha_client: tuple[HAWebSocketClient, MagicMock]
+    ) -> None:
+        """
+        A removed entity clears the state and notifies subscribers.
+        """
+        client, _ = ha_client
+        client.states["light.test"] = {
+            "entity_id": "light.test",
+            "state": "on",
+            "attributes": {},
         }
         notified = asyncio.Event()
         states: list[dict | None] = []
@@ -336,17 +400,12 @@ class TestHAWebSocketClient:
             notified.set()
 
         client.subscribe("light.test", on_state)
-        client._on_event(
-            {
-                "event_type": "state_changed",
-                "data": {"entity_id": "light.test", "new_state": None},
-            }
-        )
+        client._on_entity_event({"r": ["light.test"]})
         await asyncio.wait_for(notified.wait(), 1)
-        assert states == [None]
         assert client.get_state("light.test") is None
+        assert states == [None]
 
-    def test_on_event_other_entity(
+    def test_on_entity_event_other_entity(
         self, ha_client: tuple[HAWebSocketClient, MagicMock]
     ) -> None:
         """
@@ -355,30 +414,29 @@ class TestHAWebSocketClient:
         client, _ = ha_client
         called: list[dict | None] = []
         client.subscribe("light.other", lambda state: called.append(state))
-        client._on_event(
-            {
-                "event_type": "state_changed",
-                "data": {
-                    "entity_id": "light.test",
-                    "new_state": {"entity_id": "light.test", "state": "on"},
-                },
-            }
-        )
+        client._on_entity_event({"a": {"light.test": {"s": "on", "a": {}}}})
         assert called == []
-        assert client.get_state("light.test") == {
-            "entity_id": "light.test",
-            "state": "on",
-        }
+        assert client.get_state("light.test") is not None
 
-    def test_on_event_other_type(
+    def test_expand_state(
         self, ha_client: tuple[HAWebSocketClient, MagicMock]
     ) -> None:
         """
-        Non-state_changed events are ignored.
+        A compact state is expanded to the full format.
         """
         client, _ = ha_client
-        client._on_event({"event_type": "call_service", "data": {}})
-        assert client.states == {}
+        state = client._expand_state(
+            "light.test",
+            {"s": "on", "a": {"brightness": 128}, "c": "ctx-1", "lc": 1000},
+        )
+        assert state == {
+            "entity_id": "light.test",
+            "state": "on",
+            "attributes": {"brightness": 128},
+            "context": {"id": "ctx-1", "parent_id": None, "user_id": None},
+            "last_changed": "1970-01-01T00:16:40+00:00",
+            "last_updated": "1970-01-01T00:16:40+00:00",
+        }
 
     @pytest.mark.asyncio
     async def test_connect_error_cancels_listener(
@@ -390,14 +448,14 @@ class TestHAWebSocketClient:
         client, mock_class = ha_client
         mock = mock_class.return_value
         mock.connect = AsyncMock()
-        mock.get_states = AsyncMock(side_effect=Exception("boom"))
-        mock.subscribe_events = AsyncMock()
+        mock.subscribe_entities = AsyncMock(side_effect=Exception("boom"))
 
         async def start_listening() -> None:
             await asyncio.Event().wait()
 
         mock.start_listening = start_listening
 
+        client.subscribe("light.test", lambda state: None)
         with pytest.raises(Exception):
             await client._connect()
         assert client.connected is False
@@ -413,8 +471,7 @@ class TestHAWebSocketClient:
         client, mock_class = ha_client
         mock = mock_class.return_value
         mock.connect = AsyncMock(side_effect=[Exception("boom"), None])
-        mock.get_states = AsyncMock(return_value=[])
-        mock.subscribe_events = AsyncMock()
+        mock.subscribe_entities = AsyncMock()
         mock.start_listening = AsyncMock()
         client.retry_delay = 0.01
 
@@ -435,8 +492,7 @@ class TestHAWebSocketClient:
         client, mock_class = ha_client
         mock = mock_class.return_value
         mock.connect = AsyncMock()
-        mock.get_states = AsyncMock(return_value=[])
-        mock.subscribe_events = AsyncMock()
+        mock.subscribe_entities = AsyncMock()
         mock.start_listening = AsyncMock()
         mock.disconnect = AsyncMock()
         client.retry_delay = 0.01
@@ -541,6 +597,8 @@ class TestHAEntityTile:
             "Disconnected",
             {"icon-primary": "icon-inactive", "tile-bg": "tile-inactive-bg"},
             "cloud-question-outline",
+            subtitle=None,
+            badge=None,
         )
 
     @pytest.mark.asyncio
@@ -555,7 +613,11 @@ class TestHAEntityTile:
         }
         await tile.set_tile()
         tile.controller.draw_tile.assert_awaited_once_with(
-            "Test Light", {"icon-primary": "icon-active"}, "lightbulb"
+            "Test Light",
+            {"icon-primary": "icon-active"},
+            "lightbulb",
+            subtitle="On",
+            badge=None,
         )
 
     @pytest.mark.asyncio
@@ -574,6 +636,7 @@ class TestHAEntityTile:
         await tile.set_tile()
         colors = tile.controller.draw_tile.await_args.args[1]
         assert colors["icon-primary"] == "#FF0000"
+        assert tile.controller.draw_tile.await_args.kwargs["subtitle"] == "On"
 
     @pytest.mark.asyncio
     async def test_set_tile_off(self, tile: HAEntityTile) -> None:
@@ -590,6 +653,8 @@ class TestHAEntityTile:
             "Test Light",
             {"icon-primary": "icon-inactive", "tile-bg": "tile-inactive-bg"},
             "lightbulb-off-outline",
+            subtitle="Off",
+            badge=None,
         )
 
     @pytest.mark.asyncio
@@ -605,8 +670,10 @@ class TestHAEntityTile:
         await tile.set_tile()
         tile.controller.draw_tile.assert_awaited_once_with(
             "Test Light",
-            {"icon-primary": "icon-alert", "tile-bg": "tile-inactive-bg"},
+            {"icon-primary": "icon-inactive", "tile-bg": "tile-inactive-bg"},
             "lightbulb",
+            subtitle="Unavailable",
+            badge="alert-circle",
         )
 
     @pytest.mark.asyncio
@@ -940,14 +1007,14 @@ class TestHAEntityDial:
         await dial._set_value(0.5)
         dial.ha.call_service.assert_not_called()
 
-    def test_on_event_no_entity(
+    def test_on_entity_event_empty(
         self, ha_client: tuple[HAWebSocketClient, MagicMock]
     ) -> None:
         """
-        An event without an entity id is ignored.
+        An empty event is ignored.
         """
         client, _ = ha_client
-        client._on_event({"event_type": "state_changed", "data": {}})
+        client._on_entity_event({})
         assert client.states == {}
 
     @pytest.mark.asyncio
@@ -990,3 +1057,230 @@ class TestHAEntityDial:
         dial.ha.call_service = AsyncMock(side_effect=Exception("boom"))
         await dial.on_dial_turn(1)
         dial.controller.render_lcd.assert_awaited_once_with(tile_changed=0)
+
+
+class TestGetStateText:
+    """
+    Tests for L{megingjord.ha.get_state_text}.
+    """
+
+    def test_light_on(self) -> None:
+        """
+        An on light shows On.
+        """
+        state = {"entity_id": "light.test", "state": "on", "attributes": {}}
+        assert get_state_text(state) == "On"
+
+    def test_light_on_brightness(self) -> None:
+        """
+        An on light with brightness shows the percentage.
+        """
+        state = {
+            "entity_id": "light.test",
+            "state": "on",
+            "attributes": {"brightness": 128},
+        }
+        assert get_state_text(state) == "On · 50%"
+
+    def test_light_off(self) -> None:
+        """
+        An off light shows Off.
+        """
+        state = {"entity_id": "light.test", "state": "off", "attributes": {}}
+        assert get_state_text(state) == "Off"
+
+    def test_switch(self) -> None:
+        """
+        A switch shows On or Off.
+        """
+        state = {"entity_id": "switch.test", "state": "on", "attributes": {}}
+        assert get_state_text(state) == "On"
+
+    def test_unavailable(self) -> None:
+        """
+        An unavailable entity shows Unavailable.
+        """
+        state = {
+            "entity_id": "light.test",
+            "state": "unavailable",
+            "attributes": {},
+        }
+        assert get_state_text(state) == "Unavailable"
+
+    def test_unknown_domain(self) -> None:
+        """
+        An unknown domain shows the raw state.
+        """
+        state = {"entity_id": "sensor.test", "state": "42", "attributes": {}}
+        assert get_state_text(state) == "42"
+
+    def test_non_string_state(self) -> None:
+        """
+        A non-string state yields an empty text.
+        """
+        state = {"entity_id": "sensor.test", "state": 42, "attributes": {}}
+        assert get_state_text(state) == ""
+
+
+class TestSubscribeWhileConnected:
+    """
+    Tests for subscribing while connected.
+    """
+
+    @pytest.mark.asyncio
+    async def test_subscribe_while_connected(
+        self, ha_client: tuple[HAWebSocketClient, MagicMock]
+    ) -> None:
+        """
+        Subscribing while connected subscribes on the server.
+        """
+        client, mock_class = ha_client
+        mock = mock_class.return_value
+        mock.subscribe_entities = AsyncMock()
+        client._connected = True
+
+        async def on_state(state: dict | None) -> None:
+            pass
+
+        client.subscribe("light.test", on_state)
+        await asyncio.sleep(0.01)
+        mock.subscribe_entities.assert_awaited_once()
+        assert mock.subscribe_entities.call_args.args[1] == ["light.test"]
+
+
+class TestMergeDiff:
+    """
+    Tests for L{megingjord.ha.HAWebSocketClient._merge_diff}.
+    """
+
+    def test_no_cache(
+        self, ha_client: tuple[HAWebSocketClient, MagicMock]
+    ) -> None:
+        """
+        A diff without a cached state is expanded.
+        """
+        client, _ = ha_client
+        state = client._merge_diff("light.test", {"+": {"s": "on", "a": {}}})
+        assert state is not None
+        assert state["state"] == "on"
+        assert client.get_state("light.test")["state"] == "on"
+
+    def test_removed_only(
+        self, ha_client: tuple[HAWebSocketClient, MagicMock]
+    ) -> None:
+        """
+        A diff without additions returns None.
+        """
+        client, _ = ha_client
+        state = client._merge_diff("light.test", {"-": {"a": ["brightness"]}})
+        assert state is None
+
+    def test_context(
+        self, ha_client: tuple[HAWebSocketClient, MagicMock]
+    ) -> None:
+        """
+        A string context and last_changed are merged.
+        """
+        client, _ = ha_client
+        client.states["light.test"] = {
+            "entity_id": "light.test",
+            "state": "on",
+            "attributes": {},
+            "context": {"id": "old", "parent_id": None, "user_id": None},
+            "last_changed": "2026-01-01T00:00:00+00:00",
+            "last_updated": "2026-01-01T00:00:00+00:00",
+        }
+        client._merge_diff("light.test", {"+": {"c": "new-ctx", "lc": 1000}})
+        state = client.get_state("light.test")
+        assert state["context"]["id"] == "new-ctx"
+        assert state["last_changed"] == "1970-01-01T00:16:40+00:00"
+        assert state["last_updated"] == "1970-01-01T00:16:40+00:00"
+
+    def test_context_dict(
+        self, ha_client: tuple[HAWebSocketClient, MagicMock]
+    ) -> None:
+        """
+        A dict context is merged.
+        """
+        client, _ = ha_client
+        client.states["light.test"] = {
+            "entity_id": "light.test",
+            "state": "on",
+            "attributes": {},
+            "context": {"id": "old"},
+        }
+        client._merge_diff("light.test", {"+": {"c": {"user_id": "user-1"}}})
+        state = client.get_state("light.test")
+        assert state["context"] == {"id": "old", "user_id": "user-1"}
+
+    def test_last_updated(
+        self, ha_client: tuple[HAWebSocketClient, MagicMock]
+    ) -> None:
+        """
+        A last_updated timestamp is merged.
+        """
+        client, _ = ha_client
+        client.states["light.test"] = {
+            "entity_id": "light.test",
+            "state": "on",
+            "attributes": {},
+            "last_changed": "2026-01-01T00:00:00+00:00",
+            "last_updated": "2026-01-01T00:00:00+00:00",
+        }
+        client._merge_diff("light.test", {"+": {"lu": 2000}})
+        state = client.get_state("light.test")
+        assert state["last_changed"] == "2026-01-01T00:00:00+00:00"
+        assert state["last_updated"] == "1970-01-01T00:33:20+00:00"
+
+
+class TestSubscribeEntity:
+    """
+    Tests for L{megingjord.ha.HAWebSocketClient._subscribe_entity}.
+    """
+
+    def test_no_client(
+        self, ha_client: tuple[HAWebSocketClient, MagicMock]
+    ) -> None:
+        """
+        Subscribing without a client does nothing.
+        """
+        client, _ = ha_client
+        client.client = None
+        client._subscribe_entity("light.test")
+
+    @pytest.mark.asyncio
+    async def test_done_cancelled(
+        self, ha_client: tuple[HAWebSocketClient, MagicMock]
+    ) -> None:
+        """
+        A cancelled subscription task is ignored.
+        """
+        client, _ = ha_client
+        task = asyncio.create_task(asyncio.sleep(1))
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        client._on_subscribe_done("light.test", task)
+
+    @pytest.mark.asyncio
+    async def test_done_error(
+        self,
+        ha_client: tuple[HAWebSocketClient, MagicMock],
+        caplog: Any,
+    ) -> None:
+        """
+        A failed subscription task logs a warning.
+        """
+        client, _ = ha_client
+
+        async def boom() -> None:
+            raise Exception("boom")
+
+        task = asyncio.create_task(boom())
+        with pytest.raises(Exception):
+            await task
+        with caplog.at_level(logging.WARNING, logger="megingjord.ha"):
+            client._on_subscribe_done("light.test", task)
+        assert "Failed to subscribe to light.test" in caplog.text

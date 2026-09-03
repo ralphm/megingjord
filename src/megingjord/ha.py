@@ -9,6 +9,8 @@ from __future__ import annotations
 import asyncio
 import logging
 from contextlib import suppress
+from datetime import datetime, timezone
+from functools import partial
 from typing import Any, AsyncIterator, Callable, Coroutine
 
 from aiohttp import web
@@ -77,6 +79,32 @@ def get_entity_icon(
 
     domain = entity_id.split(".")[0]
     return DOMAIN_ICONS.get(domain, "toggle-switch")
+
+
+def get_state_text(state: dict[str, Any]) -> str:
+    """
+    Get a human-readable state text for an entity.
+    """
+    domain = state.get("entity_id", "").split(".")[0]
+    value: str = state.get("state", "")
+    if not isinstance(value, str):
+        value = ""
+
+    if value == "unavailable":
+        return "Unavailable"
+
+    if domain == "light":
+        if value == "on":
+            brightness = state.get("attributes", {}).get("brightness")
+            if brightness:
+                return f"On · {round(brightness / 255 * 100)}%"
+            return "On"
+        return "Off"
+
+    if domain == "switch":
+        return "On" if value == "on" else "Off"
+
+    return value.title() if value else ""
 
 
 @define
@@ -156,10 +184,10 @@ class HAWebSocketClient:
         # while it is running, so it must be started before sending any.
         listener = asyncio.create_task(self.client.start_listening())
         try:
-            states = await self.client.get_states()
-            self.states = {state["entity_id"]: state for state in states}
-            await self.client.subscribe_events(self._on_event, "state_changed")
-            await self._notify_states()
+            for entity_id in self.subscribers:
+                await self.client.subscribe_entities(
+                    self._on_entity_event, [entity_id]
+                )
             await listener
         finally:
             if not listener.done():
@@ -171,26 +199,116 @@ class HAWebSocketClient:
             await self._notify_all()
             logger.info("Disconnected from Home Assistant")
 
-    def _on_event(self, event: dict[str, Any]) -> None:
+    def _on_entity_event(self, event: dict[str, Any]) -> None:
         """
-        Handle a state_changed event.
+        Handle a subscribe_entities event.
+
+        The initial states arrive as added events, changes as diffs and
+        removals as a list of entity ids.
         """
-        if event.get("event_type") != "state_changed":
-            return
+        for entity_id, state in event.get("a", {}).items():
+            self.states[entity_id] = self._expand_state(entity_id, state)
+            self._notify(entity_id, self.states[entity_id])
 
-        data = event.get("data", {})
-        entity_id = data.get("entity_id")
-        if entity_id is None:
-            return
-
-        new_state = data.get("new_state")
-        if new_state is None:
+        for entity_id in event.get("r", []):
             self.states.pop(entity_id, None)
-        else:
-            self.states[entity_id] = new_state
+            self._notify(entity_id, None)
 
+        for entity_id, diff in event.get("c", {}).items():
+            state = self._merge_diff(entity_id, diff)
+            self._notify(entity_id, state)
+
+    def _expand_state(
+        self, entity_id: str, state: dict[str, Any]
+    ) -> dict[str, Any]:
+        """
+        Expand a compact state to the full state format.
+        """
+        context = state.get("c")
+        if isinstance(context, str):
+            context = {"id": context, "parent_id": None, "user_id": None}
+        last_changed = self._iso_time(state.get("lc"))
+        last_updated = self._iso_time(state.get("lu")) or last_changed
+        return {
+            "entity_id": entity_id,
+            "state": state.get("s"),
+            "attributes": state.get("a", {}),
+            "context": context,
+            "last_changed": last_changed,
+            "last_updated": last_updated,
+        }
+
+    def _merge_diff(
+        self, entity_id: str, diff: dict[str, Any]
+    ) -> dict[str, Any] | None:
+        """
+        Merge a state change diff into the cached state.
+        """
+        to_add = diff.get("+")
+        to_remove = diff.get("-")
+
+        current = self.states.get(entity_id)
+        if current is None:
+            if to_add is None:
+                return None
+            state = self._expand_state(entity_id, to_add)
+            self.states[entity_id] = state
+            return state
+
+        state = dict(current)
+        if to_add is not None:
+            if "s" in to_add:
+                state["state"] = to_add["s"]
+            if "c" in to_add:
+                context = to_add["c"]
+                if isinstance(context, str):
+                    state["context"] = {
+                        **state.get("context", {}),
+                        "id": context,
+                    }
+                else:
+                    state["context"] = {
+                        **state.get("context", {}),
+                        **context,
+                    }
+            if "lc" in to_add:
+                state["last_changed"] = state["last_updated"] = self._iso_time(
+                    to_add["lc"]
+                )
+            elif "lu" in to_add:
+                state["last_updated"] = self._iso_time(to_add["lu"])
+            if "a" in to_add:
+                attributes = dict(state.get("attributes", {}))
+                attributes.update(to_add["a"])
+                state["attributes"] = attributes
+
+        if to_remove is not None and to_remove.get("a"):
+            attributes = dict(state.get("attributes", {}))
+            for key in to_remove["a"]:
+                attributes.pop(key, None)
+            state["attributes"] = attributes
+
+        self.states[entity_id] = state
+        return state
+
+    def _iso_time(self, timestamp: Any) -> str | None:
+        """
+        Convert an epoch timestamp to an ISO time string.
+        """
+        if not isinstance(timestamp, (int, float)):
+            return None
+        return datetime.fromtimestamp(timestamp, tz=timezone.utc).isoformat()
+
+    def _notify(
+        self,
+        entity_id: str,
+        state: dict[str, Any] | None,
+    ) -> None:
+        """
+        Notify the subscribers of an entity of a state change.
+        """
         for callback in list(self.subscribers.get(entity_id, ())):
-            self._spawn(callback, new_state)
+            self._spawn(callback, state)
 
     def _spawn(
         self,
@@ -217,15 +335,6 @@ class HAWebSocketClient:
         for callback in callbacks:
             self._spawn(callback, None)
 
-    async def _notify_states(self) -> None:
-        """
-        Notify all subscribers of their current state.
-        """
-        for entity_id, callbacks in self.subscribers.items():
-            state = self.states.get(entity_id)
-            for callback in list(callbacks):
-                self._spawn(callback, state)
-
     def subscribe(
         self,
         entity_id: str,
@@ -239,10 +348,41 @@ class HAWebSocketClient:
         subscribers = self.subscribers.setdefault(entity_id, set())
         subscribers.add(callback)
 
+        if self._connected:
+            self._subscribe_entity(entity_id)
+
         def unsubscribe() -> None:
             subscribers.discard(callback)
 
         return unsubscribe
+
+    def _subscribe_entity(self, entity_id: str) -> None:
+        """
+        Subscribe to state changes for an entity on the server.
+        """
+        if self.client is None:
+            return
+
+        task = asyncio.create_task(
+            self.client.subscribe_entities(self._on_entity_event, [entity_id])
+        )
+        self.tasks.add(task)
+        task.add_done_callback(partial(self._on_subscribe_done, entity_id))
+
+    def _on_subscribe_done(
+        self, entity_id: str, task: asyncio.Task[Any]
+    ) -> None:
+        """
+        Handle a finished subscription task.
+        """
+        self.tasks.discard(task)
+        if task.cancelled():
+            return
+        error = task.exception()
+        if error is not None:
+            logger.warning(
+                "Failed to subscribe to %s", entity_id, exc_info=error
+            )
 
     def get_state(self, entity_id: str) -> dict[str, Any] | None:
         """
@@ -337,6 +477,8 @@ class HAEntityTile:
         if state is None:
             text = "Disconnected"
             icon = "cloud-question-outline"
+            subtitle = None
+            badge = None
             colors = {
                 "icon-primary": "icon-inactive",
                 "tile-bg": "tile-inactive-bg",
@@ -345,10 +487,13 @@ class HAEntityTile:
             attributes = state.get("attributes", {})
             text = attributes.get("friendly_name", self.entity_id)
             icon = get_entity_icon(self.entity_id, attributes, self.icon)
+            subtitle = get_state_text(state)
+            badge = None
 
             if state["state"] == "unavailable":
+                badge = "alert-circle"
                 colors = {
-                    "icon-primary": "icon-alert",
+                    "icon-primary": "icon-inactive",
                     "tile-bg": "tile-inactive-bg",
                 }
             elif state["state"] == "on":
@@ -375,7 +520,9 @@ class HAEntityTile:
 
         logger.debug(f"Setting key {self.key} to icon {icon}: {text!r}")
 
-        tile = await self.controller.draw_tile(text, colors, icon)
+        tile = await self.controller.draw_tile(
+            text, colors, icon, subtitle=subtitle, badge=badge
+        )
         self.deck.set_key_image(self.key, tile)
 
 

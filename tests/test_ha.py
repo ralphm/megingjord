@@ -737,9 +737,30 @@ class TestHAEntityDial:
     @pytest.mark.asyncio
     async def test_on_state(self, dial: HAEntityDial) -> None:
         """
-        A state change renders the LCD.
+        A state change updates the value and renders the LCD.
         """
-        await dial.on_state(None)
+        state = {
+            "entity_id": "number.test",
+            "state": "50",
+            "attributes": {"min": 0, "max": 100},
+        }
+        await dial.on_state(state)
+        assert dial.value == 0.5
+        dial.controller.render_lcd.assert_awaited_once_with(tile_changed=0)
+
+    @pytest.mark.asyncio
+    async def test_on_state_pending(self, dial: HAEntityDial) -> None:
+        """
+        A state change does not update the value while pending.
+        """
+        dial.pending = 1
+        state = {
+            "entity_id": "number.test",
+            "state": "50",
+            "attributes": {"min": 0, "max": 100},
+        }
+        await dial.on_state(state)
+        assert dial.value == 0.0
         dial.controller.render_lcd.assert_awaited_once_with(tile_changed=0)
 
     @pytest.mark.asyncio
@@ -765,6 +786,7 @@ class TestHAEntityDial:
             "state": "50",
             "attributes": {"friendly_name": "Volume", "min": 0, "max": 100},
         }
+        dial.value = 0.5
         await dial.render()
         dial.controller.draw_dial_tile.assert_awaited_once_with(
             title="Volume", icon="numeric", value=0.5, mini=False
@@ -783,6 +805,7 @@ class TestHAEntityDial:
                 "attributes": {"friendly_name": "Lamp", "brightness": 128},
             },
         )
+        dial.value = 128 / 255
         await dial.render()
         dial.controller.draw_dial_tile.assert_awaited_once_with(
             title="Lamp", icon="lightbulb", value=128 / 255, mini=False
@@ -804,6 +827,7 @@ class TestHAEntityDial:
                 },
             },
         )
+        dial.value = 0.7
         await dial.render()
         dial.controller.draw_dial_tile.assert_awaited_once_with(
             title="TV", icon="speaker", value=0.7, mini=False
@@ -822,7 +846,7 @@ class TestHAEntityDial:
     @pytest.mark.asyncio
     async def test_on_dial_turn(self, dial: HAEntityDial) -> None:
         """
-        Turning the dial sets the value and renders the LCD.
+        Turning the dial updates the value, renders and sends the command.
         """
         dial.ha.get_state.return_value = {
             "entity_id": "number.test",
@@ -831,20 +855,26 @@ class TestHAEntityDial:
         }
         dial.ha.call_service = AsyncMock()
         await dial.on_dial_turn(1)
+        assert dial.value == pytest.approx(0.01)
+        dial.controller.render_lcd.assert_awaited_once_with(tile_changed=0)
+        while dial.pending > 0:
+            await asyncio.sleep(0.01)
         dial.ha.call_service.assert_awaited_once()
         value = dial.ha.call_service.await_args.kwargs["data"]["value"]
-        assert value == pytest.approx(51.0)
-        dial.controller.render_lcd.assert_awaited_once_with(tile_changed=0)
+        assert value == pytest.approx(1.0)
 
     @pytest.mark.asyncio
     async def test_on_dial_turn_disconnected(self, dial: HAEntityDial) -> None:
         """
-        Turning the dial without a state does nothing.
+        Turning the dial without a state updates locally but sends nothing.
         """
         dial.ha.call_service = AsyncMock()
         await dial.on_dial_turn(1)
+        assert dial.value == pytest.approx(0.01)
+        dial.controller.render_lcd.assert_awaited_once_with(tile_changed=0)
+        while dial.pending > 0:
+            await asyncio.sleep(0.01)
         dial.ha.call_service.assert_not_called()
-        dial.controller.render_lcd.assert_not_called()
 
     def test_get_value_number(self, dial: HAEntityDial) -> None:
         """
@@ -891,6 +921,18 @@ class TestHAEntityDial:
         }
         assert dial._get_value(state) == pytest.approx(128 / 255)
 
+    def test_get_value_light_off(self) -> None:
+        """
+        An off light without brightness yields zero.
+        """
+        dial = make_dial("light.test", None)
+        state = {
+            "entity_id": "light.test",
+            "state": "off",
+            "attributes": {"brightness": None},
+        }
+        assert dial._get_value(state) == 0.0
+
     def test_get_value_media_player(self) -> None:
         """
         A media player value is its volume level.
@@ -902,6 +944,18 @@ class TestHAEntityDial:
             "attributes": {"volume_level": 0.7},
         }
         assert dial._get_value(state) == 0.7
+
+    def test_get_value_media_player_none(self) -> None:
+        """
+        A media player without volume yields zero.
+        """
+        dial = make_dial("media_player.tv", None)
+        state = {
+            "entity_id": "media_player.tv",
+            "state": "playing",
+            "attributes": {"volume_level": None},
+        }
+        assert dial._get_value(state) == 0.0
 
     def test_get_value_unknown(self) -> None:
         """
@@ -1057,6 +1111,8 @@ class TestHAEntityDial:
         dial.ha.call_service = AsyncMock(side_effect=Exception("boom"))
         await dial.on_dial_turn(1)
         dial.controller.render_lcd.assert_awaited_once_with(tile_changed=0)
+        while dial.pending > 0:
+            await asyncio.sleep(0.01)
 
 
 class TestGetStateText:
@@ -1284,3 +1340,31 @@ class TestSubscribeEntity:
         with caplog.at_level(logging.WARNING, logger="megingjord.ha"):
             client._on_subscribe_done("light.test", task)
         assert "Failed to subscribe to light.test" in caplog.text
+
+
+class TestCallbackErrors:
+    """
+    Tests for callback error handling.
+    """
+
+    @pytest.mark.asyncio
+    async def test_callback_error_logged(
+        self,
+        ha_client: tuple[HAWebSocketClient, MagicMock],
+        caplog: Any,
+    ) -> None:
+        """
+        A failing state callback logs an error.
+        """
+        client, _ = ha_client
+
+        async def boom(state: dict | None) -> None:
+            raise Exception("boom")
+
+        client.subscribe("light.test", boom)
+        with caplog.at_level(logging.ERROR, logger="megingjord.ha"):
+            client._notify(
+                "light.test", {"entity_id": "light.test", "state": "on"}
+            )
+            await asyncio.sleep(0.05)
+        assert "Error in state callback for light.test" in caplog.text

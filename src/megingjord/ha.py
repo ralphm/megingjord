@@ -308,19 +308,40 @@ class HAWebSocketClient:
         Notify the subscribers of an entity of a state change.
         """
         for callback in list(self.subscribers.get(entity_id, ())):
-            self._spawn(callback, state)
+            self._spawn(callback, state, entity_id)
 
     def _spawn(
         self,
         callback: Callable[[dict[str, Any] | None], Coroutine[Any, Any, None]],
         state: dict[str, Any] | None,
+        entity_id: str | None = None,
     ) -> None:
         """
         Run a callback as a task.
         """
         task = asyncio.create_task(callback(state))
         self.tasks.add(task)
-        task.add_done_callback(self.tasks.discard)
+        task.add_done_callback(partial(self._on_callback_done, entity_id))
+
+    def _on_callback_done(
+        self, entity_id: str | None, task: asyncio.Task[None]
+    ) -> None:
+        """
+        Handle a finished callback task.
+        """
+        self.tasks.discard(task)
+        if task.cancelled():
+            return
+        error = task.exception()
+        if error is not None:
+            if entity_id is None:
+                logger.error("Error in state callback", exc_info=error)
+            else:
+                logger.error(
+                    "Error in state callback for %s",
+                    entity_id,
+                    exc_info=error,
+                )
 
     async def _notify_all(self) -> None:
         """
@@ -539,6 +560,9 @@ class HAEntityDial:
     controller: DeckController | None = field(init=False)
     deck: StreamDeck = field(init=False)
     unsubscribes: list[Callable[[], None]] = field(init=False, factory=list)
+    value: float = field(init=False, default=0.0)
+    pending: int = field(init=False, default=0)
+    tasks: set[asyncio.Task[None]] = field(init=False, factory=set)
 
     async def start(self, deck: StreamDeck) -> None:
         """
@@ -546,6 +570,9 @@ class HAEntityDial:
         """
         self.deck = deck
         self.unsubscribes = [self.ha.subscribe(self.entity_id, self.on_state)]
+        state = self.ha.get_state(self.entity_id)
+        if state is not None:
+            self.value = self._get_value(state)
         await self.render()
 
     async def stop(self) -> None:
@@ -558,10 +585,12 @@ class HAEntityDial:
         if self.controller is not None:
             await self.controller.render_lcd(tile_changed=self.dial)
 
-    async def on_state(self, _state: dict[str, Any] | None) -> None:
+    async def on_state(self, state: dict[str, Any] | None) -> None:
         """
         The entity state changed.
         """
+        if state is not None and self.pending == 0:
+            self.value = self._get_value(state)
         if self.controller is not None:
             await self.controller.render_lcd(tile_changed=self.dial)
 
@@ -582,7 +611,7 @@ class HAEntityDial:
             attributes = state.get("attributes", {})
             title = attributes.get("friendly_name", self.entity_id)
             icon = get_entity_icon(self.entity_id, attributes)
-            value = self._get_value(state)
+            value = self.value
 
         return await self.controller.draw_dial_tile(
             title=title, icon=icon, value=value, mini=mini
@@ -600,19 +629,25 @@ class HAEntityDial:
         if not self.controller:
             return
 
-        state = self.ha.get_state(self.entity_id)
-        if state is None:
-            return
-
         change = round(value / abs(value) * (1.6 ** abs(value) - 1))
-        pct = min(max(self._get_value(state) + change / 100.0, 0.0), 1.0)
+        self.value = min(max(self.value + change / 100.0, 0.0), 1.0)
+        await self.controller.render_lcd(tile_changed=self.dial)
 
+        self.pending += 1
+        task = asyncio.create_task(self._send_value(self.value))
+        self.tasks.add(task)
+        task.add_done_callback(self.tasks.discard)
+
+    async def _send_value(self, pct: float) -> None:
+        """
+        Send the value to the entity, tracking pending commands.
+        """
         try:
             await self._set_value(pct)
         except Exception:  # pylint: disable=W0718
             logger.error("Failed to set %s", self.entity_id, exc_info=True)
-
-        await self.controller.render_lcd(tile_changed=self.dial)
+        finally:
+            self.pending -= 1
 
     def _get_value(self, state: dict[str, Any]) -> float:
         """
@@ -633,10 +668,16 @@ class HAEntityDial:
             return (current - minimum) / (maximum - minimum)
 
         if domain == "light":
-            return float(attributes.get("brightness", 0)) / 255.0
+            brightness = attributes.get("brightness")
+            if brightness is None:
+                return 0.0
+            return float(brightness) / 255.0
 
         if domain == "media_player":
-            return float(attributes.get("volume_level", 0))
+            volume = attributes.get("volume_level")
+            if volume is None:
+                return 0.0
+            return float(volume)
 
         return 0.0
 

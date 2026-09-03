@@ -32,6 +32,7 @@ dependencies = [
     "pillow >= 9.0.0",
     "pulsectl-asyncio",
     "aiohttp",
+    "hass_client",
     "CairoSVG",
     "svgelements",
     "xdg_base_dirs",
@@ -85,7 +86,7 @@ strict = true
 untyped_calls_exclude="PIL"
 
 [[tool.mypy.overrides]]
-module = "StreamDeck.*,svgelements,cairosvg,pulsectl,pulsectl_asyncio"
+module = "StreamDeck.*,svgelements,cairosvg,pulsectl,pulsectl_asyncio,hass_client"
 ignore_missing_imports = true
 
 [tool.coverage.run]

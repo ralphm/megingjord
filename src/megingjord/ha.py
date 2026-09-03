@@ -7,14 +7,13 @@ Home Assistant support.
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 from contextlib import suppress
 from typing import Any, AsyncIterator, Callable, Coroutine
 
-import aiohttp
 from aiohttp import web
 from attrs import define, field
+from hass_client import HomeAssistantClient
 from PIL import Image
 from StreamDeck.Devices.StreamDeck import StreamDeck
 
@@ -22,12 +21,6 @@ from .color_utils import is_dark, rgb_to_hex, scale_rgb_down
 from .streamdeck import DeckController
 
 logger = logging.getLogger(__name__)
-
-
-class HAError(Exception):
-    """
-    Home Assistant error.
-    """
 
 
 # Icon shown for the off state of known entity types.
@@ -91,27 +84,26 @@ class HAWebSocketClient:
     """
     Home Assistant WebSocket client.
 
-    Connects to the Home Assistant WebSocket API, subscribes to state
-    changes, and provides helpers for getting state and calling services.
+    Thin wrapper around L{HomeAssistantClient} from hass_client, adding
+    state caching and per-entity subscriptions.
     """
 
     app: web.Application
     url: str
     token: str
+    retry_delay: float = field(default=10.0)
 
-    ws: aiohttp.ClientWebSocketResponse | None = field(
-        init=False, default=None
-    )
-    next_id: int = field(init=False, default=0)
-    pending: dict[int, asyncio.Future[Any]] = field(init=False, factory=dict)
+    client: HomeAssistantClient = field(init=False)
     states: dict[str, dict[str, Any]] = field(init=False, factory=dict)
     subscribers: dict[
         str, set[Callable[[dict[str, Any] | None], Coroutine[Any, Any, None]]]
     ] = field(init=False, factory=dict)
     tasks: set[asyncio.Task[None]] = field(init=False, factory=set)
     task: asyncio.Task[None] | None = field(init=False, default=None)
+    _connected: bool = field(init=False, default=False)
 
     def __attrs_post_init__(self) -> None:
+        self.client = HomeAssistantClient(self.url, self.token)
         self.app.cleanup_ctx.append(self.start)
 
     @property
@@ -119,7 +111,7 @@ class HAWebSocketClient:
         """
         Whether the client is connected to Home Assistant.
         """
-        return self.ws is not None
+        return self._connected
 
     async def start(self, _app: web.Application) -> AsyncIterator[None]:
         """
@@ -132,131 +124,61 @@ class HAWebSocketClient:
         self.task.cancel()
         with suppress(asyncio.CancelledError):
             await self.task
+        await self.client.disconnect()
 
     async def run(self) -> None:
         """
         Connect to Home Assistant, reconnecting as needed.
         """
-        async with aiohttp.ClientSession() as session:
-            while True:
-                try:
-                    await self._connect(session)
-                except Exception:  # pylint: disable=W0718
-                    logger.error(
-                        "Error connecting to Home Assistant", exc_info=True
-                    )
+        while True:
+            try:
+                await self._connect()
+            except Exception:  # pylint: disable=W0718
+                logger.error(
+                    "Error connecting to Home Assistant", exc_info=True
+                )
 
-                await asyncio.sleep(10)
+            await asyncio.sleep(self.retry_delay)
 
-    async def _connect(self, session: aiohttp.ClientSession) -> None:
+    async def _connect(self) -> None:
         """
         Connect to Home Assistant and process messages until disconnected.
         """
-        ws = await session.ws_connect(self.url)
+        await self.client.connect()
+        states = await self.client.get_states()
+        self.states = {state["entity_id"]: state for state in states}
+        await self.client.subscribe_events(self._on_event, "state_changed")
+        self._connected = True
+        logger.info("Connected to Home Assistant")
 
         try:
-            msg = await ws.receive_json()
-            if msg["type"] != "auth_required":
-                raise HAError(f"Unexpected message: {msg}")
-
-            await ws.send_json({"type": "auth", "access_token": self.token})
-
-            msg = await ws.receive_json()
-            if msg["type"] != "auth_ok":
-                raise HAError(f"Authentication failed: {msg}")
-
-            logger.info("Connected to Home Assistant")
-            self.ws = ws
-
-            await self._get_states()
-            await self._subscribe_events()
-            await self._read_messages(ws)
+            await self.client.start_listening()
         finally:
-            self.ws = None
+            self._connected = False
             self.states = {}
-
-            for future in self.pending.values():
-                if not future.done():
-                    future.set_exception(
-                        HAError("Disconnected from Home Assistant")
-                    )
-            self.pending = {}
-
             await self._notify_all()
             logger.info("Disconnected from Home Assistant")
 
-    async def _command(self, command: str, **kwargs: Any) -> Any:
+    def _on_event(self, event: dict[str, Any]) -> None:
         """
-        Send a command and wait for the result.
+        Handle a state_changed event.
         """
-        if self.ws is None:
-            raise HAError("Not connected to Home Assistant")
+        if event.get("event_type") != "state_changed":
+            return
 
-        self.next_id += 1
-        msg_id = self.next_id
-        future: asyncio.Future[Any] = (
-            asyncio.get_running_loop().create_future()
-        )
-        self.pending[msg_id] = future
+        data = event.get("data", {})
+        entity_id = data.get("entity_id")
+        if entity_id is None:
+            return
 
-        await self.ws.send_json({"id": msg_id, "type": command, **kwargs})
+        new_state = data.get("new_state")
+        if new_state is None:
+            self.states.pop(entity_id, None)
+        else:
+            self.states[entity_id] = new_state
 
-        return await future
-
-    async def _get_states(self) -> None:
-        """
-        Fetch all entity states.
-        """
-        result = await self._command("get_states")
-        self.states = {state["entity_id"]: state for state in result}
-
-    async def _subscribe_events(self) -> None:
-        """
-        Subscribe to state change events.
-        """
-        await self._command("subscribe_events", event_type="state_changed")
-
-    async def _read_messages(
-        self, ws: aiohttp.ClientWebSocketResponse
-    ) -> None:
-        """
-        Process incoming messages.
-        """
-        async for msg in ws:
-            if msg.type == aiohttp.WSMsgType.TEXT:
-                try:
-                    data = json.loads(msg.data)
-                except json.JSONDecodeError:
-                    logger.warning(
-                        "Invalid JSON from Home Assistant: %r", msg.data
-                    )
-                    continue
-
-                if data["type"] == "result":
-                    future = self.pending.pop(data["id"], None)
-                    if future is not None and not future.done():
-                        if data["success"]:
-                            future.set_result(data.get("result"))
-                        else:
-                            error = data.get("error", {})
-                            future.set_exception(
-                                HAError(error.get("message", "Unknown error"))
-                            )
-                elif data["type"] == "event":
-                    event = data["event"]
-                    if event["event_type"] == "state_changed":
-                        entity_id = event["data"]["entity_id"]
-                        new_state = event["data"].get("new_state")
-                        if new_state is None:
-                            self.states.pop(entity_id, None)
-                        else:
-                            self.states[entity_id] = new_state
-                        for callback in list(
-                            self.subscribers.get(entity_id, ())
-                        ):
-                            self._spawn(callback, new_state)
-            elif msg.type == aiohttp.WSMsgType.ERROR:
-                logger.error("WebSocket error: %s", ws.exception())
+        for callback in list(self.subscribers.get(entity_id, ())):
+            self._spawn(callback, new_state)
 
     def _spawn(
         self,
@@ -317,13 +239,13 @@ class HAWebSocketClient:
         """
         Call a Home Assistant service.
         """
-        kwargs: dict[str, Any] = {"domain": domain, "service": service}
+        kwargs: dict[str, Any] = {}
         if entity_id is not None:
             kwargs["target"] = {"entity_id": entity_id}
         if data is not None:
             kwargs["service_data"] = data
 
-        return await self._command("call_service", **kwargs)
+        return await self.client.call_service(domain, service, **kwargs)
 
 
 @define

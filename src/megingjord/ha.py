@@ -149,16 +149,23 @@ class HAWebSocketClient:
         """
         assert self.client is not None
         await self.client.connect()
-        states = await self.client.get_states()
-        self.states = {state["entity_id"]: state for state in states}
-        await self.client.subscribe_events(self._on_event, "state_changed")
         self._connected = True
         logger.info("Connected to Home Assistant")
-        await self._notify_states()
 
+        # The listener is the message pump: commands only get responses
+        # while it is running, so it must be started before sending any.
+        listener = asyncio.create_task(self.client.start_listening())
         try:
-            await self.client.start_listening()
+            states = await self.client.get_states()
+            self.states = {state["entity_id"]: state for state in states}
+            await self.client.subscribe_events(self._on_event, "state_changed")
+            await self._notify_states()
+            await listener
         finally:
+            if not listener.done():
+                listener.cancel()
+                with suppress(asyncio.CancelledError):
+                    await listener
             self._connected = False
             self.states = {}
             await self._notify_all()

@@ -381,6 +381,29 @@ class TestHAWebSocketClient:
         assert client.states == {}
 
     @pytest.mark.asyncio
+    async def test_connect_error_cancels_listener(
+        self, ha_client: tuple[HAWebSocketClient, MagicMock]
+    ) -> None:
+        """
+        A failed command cancels the listener and cleans up.
+        """
+        client, mock_class = ha_client
+        mock = mock_class.return_value
+        mock.connect = AsyncMock()
+        mock.get_states = AsyncMock(side_effect=Exception("boom"))
+        mock.subscribe_events = AsyncMock()
+
+        async def start_listening() -> None:
+            await asyncio.Event().wait()
+
+        mock.start_listening = start_listening
+
+        with pytest.raises(Exception):
+            await client._connect()
+        assert client.connected is False
+        assert client.get_state("light.test") is None
+
+    @pytest.mark.asyncio
     async def test_run_reconnects(
         self, ha_client: tuple[HAWebSocketClient, MagicMock]
     ) -> None:

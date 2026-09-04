@@ -454,7 +454,7 @@ class DeckController:
                     color=get_color("icon-warning"),
                     size=24,
                     pos_x=80,
-                    pos_y=16,
+                    pos_y=22,
                 )
             )
 

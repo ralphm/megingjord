@@ -85,6 +85,54 @@ def get_entity_icon(
     return DOMAIN_ICONS.get(domain, "toggle-switch")
 
 
+def icon_from_range(value: float, range_icons: dict[str, str]) -> str | None:
+    """
+    Get an icon from a numeric range, like the frontend.
+    """
+    thresholds = []
+    for key, icon in range_icons.items():
+        try:
+            thresholds.append((float(key), key))
+        except ValueError:
+            continue
+    thresholds.sort()
+    if not thresholds:
+        return None
+    if value < thresholds[0][0]:
+        return None
+    selected = thresholds[0]
+    for threshold, key in thresholds:
+        if value >= threshold:
+            selected = (threshold, key)
+        else:
+            break
+    return range_icons[selected[1]]
+
+
+def icon_from_translations(
+    state: str | None,
+    translations: dict[str, Any] | None,
+) -> str | None:
+    """
+    Get an icon from translation-key icons, like the frontend.
+    """
+    if not translations:
+        return None
+    if state and translations.get("state", {}).get(state):
+        return str(translations["state"][state])
+    if state is not None and translations.get("range"):
+        try:
+            value = float(state)
+        except (TypeError, ValueError):
+            value = None
+        if value is not None:
+            icon = icon_from_range(value, translations["range"])
+            if icon is not None:
+                return icon
+            return translations.get("default")
+    return translations.get("default")
+
+
 def get_state_text(state: dict[str, Any]) -> str:
     """
     Get a human-readable state text for an entity.
@@ -128,6 +176,12 @@ class HAWebSocketClient:
     client: HomeAssistantClient | None = field(init=False, default=None)
     states: dict[str, dict[str, Any]] = field(init=False, factory=dict)
     missing: set[str] = field(init=False, factory=set)
+    registry_entries: dict[str, dict[str, Any] | None] = field(
+        init=False, factory=dict
+    )
+    platform_icons: dict[str, dict[str, Any] | None] = field(
+        init=False, factory=dict
+    )
     subscribers: dict[
         str, set[Callable[[dict[str, Any] | None], Coroutine[Any, Any, None]]]
     ] = field(init=False, factory=dict)
@@ -202,6 +256,8 @@ class HAWebSocketClient:
             self._connected = False
             self.states = {}
             self.missing.clear()
+            self.registry_entries.clear()
+            self.platform_icons.clear()
             await self._notify_all()
             logger.info("Disconnected from Home Assistant")
 
@@ -437,6 +493,86 @@ class HAWebSocketClient:
         """
         return entity_id in self.missing
 
+    async def get_entity_icon(
+        self,
+        entity_id: str,
+        attributes: dict[str, Any],
+        icon: str | None = None,
+        state: str | None = None,
+    ) -> str:
+        """
+        Get the icon for an entity, from an override, the entity icon,
+        translation-key icons or the domain.
+        """
+        if icon:
+            return icon
+        entity_icon = attributes.get("icon")
+        if isinstance(entity_icon, str) and entity_icon.startswith("mdi:"):
+            return entity_icon[4:]
+        translation_icon = await self._get_translation_icon(entity_id, state)
+        if translation_icon is not None:
+            if translation_icon.startswith("mdi:"):
+                return translation_icon[4:]
+            return translation_icon
+        return get_entity_icon(entity_id, attributes)
+
+    async def _get_translation_icon(
+        self, entity_id: str, state: str | None
+    ) -> str | None:
+        """
+        Resolve the icon from the integration's translation-key icons.
+        """
+        if self.client is None:
+            return None
+        try:
+            entry = await self._get_registry_entry(entity_id)
+            if entry is None:
+                return None
+            platform = entry.get("platform")
+            translation_key = entry.get("translation_key")
+            if not platform or not translation_key:
+                return None
+            icons = await self._get_platform_icons(platform)
+            if icons is None:
+                return None
+            domain = entity_id.split(".")[0]
+            translations = icons.get(domain, {}).get(translation_key)
+            return icon_from_translations(state, translations)
+        except Exception:  # pylint: disable=W0718
+            logger.warning(
+                "Failed to resolve icon for %s", entity_id, exc_info=True
+            )
+            return None
+
+    async def _get_registry_entry(
+        self, entity_id: str
+    ) -> dict[str, Any] | None:
+        """
+        Get the entity registry entry, cached per entity.
+        """
+        if entity_id not in self.registry_entries:
+            assert self.client is not None
+            self.registry_entries[entity_id] = (
+                await self.client.get_entity_registry_entry(entity_id)
+            )
+        return self.registry_entries[entity_id]
+
+    async def _get_platform_icons(
+        self, platform: str
+    ) -> dict[str, Any] | None:
+        """
+        Get the integration's entity icons, cached per platform.
+        """
+        if platform not in self.platform_icons:
+            assert self.client is not None
+            result = await self.client.send_command(
+                "frontend/get_icons", category="entity", integration=platform
+            )
+            self.platform_icons[platform] = result.get("resources", {}).get(
+                platform
+            )
+        return self.platform_icons[platform]
+
     async def call_service(
         self,
         domain: str,
@@ -537,7 +673,9 @@ class HAEntityTile:
         else:
             attributes = state.get("attributes", {})
             text = attributes.get("friendly_name", self.entity_id)
-            icon = get_entity_icon(self.entity_id, attributes, self.icon)
+            icon = await self.ha.get_entity_icon(
+                self.entity_id, attributes, self.icon, state["state"]
+            )
             subtitle = get_state_text(state)
             badge = None
 
@@ -648,7 +786,9 @@ class HAEntityDial:
         else:
             attributes = state.get("attributes", {})
             title = attributes.get("friendly_name", self.entity_id)
-            icon = get_entity_icon(self.entity_id, attributes)
+            icon = await self.ha.get_entity_icon(
+                self.entity_id, attributes, state=state["state"]
+            )
             value = self.value
 
         return await self.controller.draw_dial_tile(

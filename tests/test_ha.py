@@ -18,6 +18,8 @@ from megingjord.ha import (
     HAWebSocketClient,
     get_entity_icon,
     get_state_text,
+    icon_from_range,
+    icon_from_translations,
     normalize_url,
 )
 
@@ -564,6 +566,11 @@ def tile() -> HAEntityTile:
     ha.subscribe.return_value = lambda: None
     ha.get_state.return_value = None
     ha.is_missing.return_value = False
+    ha.get_entity_icon = AsyncMock(
+        side_effect=lambda entity_id, attributes, icon=None, state=None: (
+            get_entity_icon(entity_id, attributes, icon)
+        )
+    )
     tile = HAEntityTile(0, ha, "light.test")
     tile.controller = AsyncMock()
     tile.controller.draw_tile.return_value = b"tile"
@@ -756,6 +763,11 @@ def make_dial(entity_id: str, state: dict | None) -> HAEntityDial:
     ha.subscribe.return_value = lambda: None
     ha.get_state.return_value = state
     ha.is_missing.return_value = False
+    ha.get_entity_icon = AsyncMock(
+        side_effect=lambda entity_id, attributes, icon=None, state=None: (
+            get_entity_icon(entity_id, attributes, icon)
+        )
+    )
     dial = HAEntityDial(0, ha, entity_id)
     dial.controller = AsyncMock()
     dial.controller.draw_dial_tile.return_value = Image.new("RGBA", (140, 100))
@@ -1241,6 +1253,299 @@ class TestHAEntityDial:
         await asyncio.sleep(SEND_DELAY_SECONDS + 0.05)
         while dial.pending > 0:
             await asyncio.sleep(0.01)
+
+
+class TestGetEntityIconAsync:
+    """
+    Tests for L{megingjord.ha.HAWebSocketClient.get_entity_icon}.
+    """
+
+    @pytest.mark.asyncio
+    async def test_override_wins(
+        self, ha_client: tuple[HAWebSocketClient, MagicMock]
+    ) -> None:
+        """
+        An explicit icon override wins without any lookups.
+        """
+        client, mock_class = ha_client
+        mock = mock_class.return_value
+        assert await client.get_entity_icon("light.test", {}, icon="custom")
+        mock.get_entity_registry_entry.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_entity_icon_wins(
+        self, ha_client: tuple[HAWebSocketClient, MagicMock]
+    ) -> None:
+        """
+        The entity icon attribute wins without any lookups.
+        """
+        client, mock_class = ha_client
+        mock = mock_class.return_value
+        icon = await client.get_entity_icon("light.test", {"icon": "mdi:lamp"})
+        assert icon == "lamp"
+        mock.get_entity_registry_entry.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_translation_icon(
+        self, ha_client: tuple[HAWebSocketClient, MagicMock]
+    ) -> None:
+        """
+        Translation-key icons resolve from the integration's icons.
+        """
+        client, mock_class = ha_client
+        mock = mock_class.return_value
+        mock.get_entity_registry_entry = AsyncMock(
+            return_value={
+                "entity_id": "light.test",
+                "platform": "hue",
+                "translation_key": "hue_grouped_light",
+            }
+        )
+        mock.send_command = AsyncMock(
+            return_value={
+                "resources": {
+                    "hue": {
+                        "light": {
+                            "hue_grouped_light": {
+                                "default": "mdi:lightbulb-group",
+                                "state": {"off": "mdi:lightbulb-group-off"},
+                            }
+                        }
+                    }
+                }
+            }
+        )
+        assert (
+            await client.get_entity_icon("light.test", {}) == "lightbulb-group"
+        )
+        assert (
+            await client.get_entity_icon("light.test", {}, state="off")
+            == "lightbulb-group-off"
+        )
+        mock.send_command.assert_awaited_once_with(
+            "frontend/get_icons", category="entity", integration="hue"
+        )
+
+    @pytest.mark.asyncio
+    async def test_translation_icon_cached(
+        self, ha_client: tuple[HAWebSocketClient, MagicMock]
+    ) -> None:
+        """
+        Platform icons are fetched once per integration.
+        """
+        client, mock_class = ha_client
+        mock = mock_class.return_value
+        mock.get_entity_registry_entry = AsyncMock(
+            side_effect=[
+                {
+                    "entity_id": "light.a",
+                    "platform": "hue",
+                    "translation_key": "hue_grouped_light",
+                },
+                {
+                    "entity_id": "light.b",
+                    "platform": "hue",
+                    "translation_key": "hue_grouped_light",
+                },
+            ]
+        )
+        mock.send_command = AsyncMock(
+            return_value={
+                "resources": {
+                    "hue": {
+                        "light": {
+                            "hue_grouped_light": {
+                                "default": "mdi:lightbulb-group"
+                            }
+                        }
+                    }
+                }
+            }
+        )
+        assert await client.get_entity_icon("light.a", {}) == "lightbulb-group"
+        assert await client.get_entity_icon("light.b", {}) == "lightbulb-group"
+        mock.send_command.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_translation_icon_range(
+        self, ha_client: tuple[HAWebSocketClient, MagicMock]
+    ) -> None:
+        """
+        Numeric states resolve range-based icons.
+        """
+        client, mock_class = ha_client
+        mock = mock_class.return_value
+        mock.get_entity_registry_entry = AsyncMock(
+            return_value={
+                "entity_id": "sensor.test",
+                "platform": "test",
+                "translation_key": "battery",
+            }
+        )
+        mock.send_command = AsyncMock(
+            return_value={
+                "resources": {
+                    "test": {
+                        "sensor": {
+                            "battery": {
+                                "default": "mdi:battery",
+                                "range": {
+                                    "20": "mdi:battery-low",
+                                    "80": "mdi:battery-high",
+                                },
+                            }
+                        }
+                    }
+                }
+            }
+        )
+        assert (
+            await client.get_entity_icon("sensor.test", {}, state="50")
+            == "battery-low"
+        )
+        assert (
+            await client.get_entity_icon("sensor.test", {}, state="90")
+            == "battery-high"
+        )
+        assert (
+            await client.get_entity_icon("sensor.test", {}, state="5")
+            == "battery"
+        )
+
+    @pytest.mark.asyncio
+    async def test_no_translation_key(
+        self, ha_client: tuple[HAWebSocketClient, MagicMock]
+    ) -> None:
+        """
+        Without a translation key, the domain default is used.
+        """
+        client, mock_class = ha_client
+        mock = mock_class.return_value
+        mock.get_entity_registry_entry = AsyncMock(
+            return_value={"entity_id": "light.test", "platform": "hue"}
+        )
+        assert await client.get_entity_icon("light.test", {}) == "lightbulb"
+        mock.send_command.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_unknown_entity(
+        self, ha_client: tuple[HAWebSocketClient, MagicMock]
+    ) -> None:
+        """
+        Without a registry entry, the domain default is used.
+        """
+        client, mock_class = ha_client
+        mock = mock_class.return_value
+        mock.get_entity_registry_entry = AsyncMock(return_value=None)
+        assert await client.get_entity_icon("light.test", {}) == "lightbulb"
+
+    @pytest.mark.asyncio
+    async def test_icon_fetch_error(
+        self, ha_client: tuple[HAWebSocketClient, MagicMock]
+    ) -> None:
+        """
+        A failed icon lookup falls back to the domain default.
+        """
+        client, mock_class = ha_client
+        mock = mock_class.return_value
+        mock.get_entity_registry_entry = AsyncMock(
+            side_effect=Exception("boom")
+        )
+        assert await client.get_entity_icon("light.test", {}) == "lightbulb"
+
+    @pytest.mark.asyncio
+    async def test_non_mdi_icon(
+        self, ha_client: tuple[HAWebSocketClient, MagicMock]
+    ) -> None:
+        """
+        Non-mdi icons are returned as-is.
+        """
+        client, mock_class = ha_client
+        mock = mock_class.return_value
+        mock.get_entity_registry_entry = AsyncMock(
+            return_value={
+                "entity_id": "light.test",
+                "platform": "hue",
+                "translation_key": "hue_grouped_light",
+            }
+        )
+        mock.send_command = AsyncMock(
+            return_value={
+                "resources": {
+                    "hue": {
+                        "light": {
+                            "hue_grouped_light": {
+                                "default": "hass:lightbulb-group"
+                            }
+                        }
+                    }
+                }
+            }
+        )
+        assert (
+            await client.get_entity_icon("light.test", {})
+            == "hass:lightbulb-group"
+        )
+
+    @pytest.mark.asyncio
+    async def test_no_platform_icons(
+        self, ha_client: tuple[HAWebSocketClient, MagicMock]
+    ) -> None:
+        """
+        Without platform icons, the domain default is used.
+        """
+        client, mock_class = ha_client
+        mock = mock_class.return_value
+        mock.get_entity_registry_entry = AsyncMock(
+            return_value={
+                "entity_id": "light.test",
+                "platform": "hue",
+                "translation_key": "hue_grouped_light",
+            }
+        )
+        mock.send_command = AsyncMock(return_value={"resources": {}})
+        assert await client.get_entity_icon("light.test", {}) == "lightbulb"
+
+    @pytest.mark.asyncio
+    async def test_no_client(self) -> None:
+        """
+        Without a client, the domain default is used.
+        """
+        client = HAWebSocketClient(
+            web.Application(), "ws://ha.local/api/websocket", "token"
+        )
+        assert await client.get_entity_icon("light.test", {}) == "lightbulb"
+
+
+class TestIconFromTranslations:
+    """
+    Tests for L{megingjord.ha.icon_from_translations}.
+    """
+
+    def test_no_translations(self) -> None:
+        """
+        Without translations, no icon is returned.
+        """
+        assert icon_from_translations("on", None) is None
+
+    def test_non_numeric_range_state(self) -> None:
+        """
+        A non-numeric state with a range falls back to the default.
+        """
+        translations = {"default": "mdi:battery", "range": {"20": "mdi:x"}}
+        assert icon_from_translations("abc", translations) == "mdi:battery"
+
+    def test_range_no_numeric_keys(self) -> None:
+        """
+        A range without numeric keys yields no icon.
+        """
+        assert icon_from_range(50, {"low": "mdi:x"}) is None
+
+    def test_range_below_threshold(self) -> None:
+        """
+        A value below the first threshold yields no icon.
+        """
+        assert icon_from_range(5, {"20": "mdi:x"}) is None
 
 
 class TestGetStateText:

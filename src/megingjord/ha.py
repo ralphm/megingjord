@@ -1026,7 +1026,7 @@ class HAAlarmTile(HAEntityTile):
     Stream Deck key for arming and disarming an alarm control panel.
     """
 
-    arm_modes: list[str] = field(factory=list)
+    arm_service: str = field(kw_only=True)
 
     async def on_key_change(self, key_state: bool) -> None:
         """
@@ -1040,12 +1040,8 @@ class HAAlarmTile(HAEntityTile):
             return
 
         value = state["state"]
-        if value in ALARM_TRANSITIONING:
-            return
-
         if value == "disarmed":
-            mode = self.arm_modes[0] if self.arm_modes else "armed_away"
-            service = ALARM_SERVICES[mode]
+            service = self.arm_service
         else:
             service = "alarm_disarm"
 
@@ -1094,6 +1090,8 @@ class HAAlarmTile(HAEntityTile):
                     "icon-primary": "icon-inactive",
                     "tile-bg": "tile-inactive-bg",
                 }
+            elif value == "triggered":
+                colors = {"icon-primary": "icon-alert"}
             elif value in ALARM_TRANSITIONING or value == "disarmed":
                 colors = {
                     "icon-primary": "icon-inactive",
@@ -1147,7 +1145,6 @@ class HAAlarmDial:
     dial: int
     ha: HAWebSocketClient
     entity_id: str
-    arm_modes: list[str] = field(factory=list)
 
     controller: DeckController | None = field(init=False)
     deck: StreamDeck = field(init=False)
@@ -1194,19 +1191,20 @@ class HAAlarmDial:
             supported_features = 0
             value = None
 
+        previous = self.current_view.selected if self.current_view else 0
+
         items: list[AlarmModeScrollerItem] = []
         selected = 0
-        for mode in ["disarmed", *self.arm_modes]:
+        for mode in ["disarmed", *ALARM_FEATURES]:
             if mode != "disarmed" and not (
-                supported_features & ALARM_FEATURES.get(mode, 0)
+                supported_features & ALARM_FEATURES[mode]
             ):
                 continue
             items.append(AlarmModeScrollerItem(mode, current=mode == value))
             if mode == value:
                 selected = len(items) - 1
-        if value and value not in {item.wrapped for item in items}:
-            items.append(AlarmModeScrollerItem(value, current=True))
-            selected = len(items) - 1
+        if value not in {item.wrapped for item in items}:
+            selected = min(previous, len(items) - 1)
         self.current_view = ScrollerView(items=items, selected=selected)
 
     async def on_dial_turn(self, value: int) -> None:
@@ -1237,9 +1235,7 @@ class HAAlarmDial:
 
         mode = self.current_view.selected_item.wrapped
         assert isinstance(mode, str)
-        service = ALARM_SERVICES.get(mode)
-        if service is None:
-            return
+        service = ALARM_SERVICES[mode]
         state = self.ha.get_state(self.entity_id)
         code_arm_required = bool(
             state and state.get("attributes", {}).get("code_arm_required")

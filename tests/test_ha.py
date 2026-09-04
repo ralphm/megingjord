@@ -13,6 +13,7 @@ from PIL import Image
 
 from megingjord.ha import (
     SEND_DELAY_SECONDS,
+    AlarmModeScrollerItem,
     HAAlarmDial,
     HAAlarmTile,
     HAEntityDial,
@@ -1930,7 +1931,7 @@ class TestCallbackErrors:
 
 
 def make_alarm_tile(
-    state: dict | None, arm_modes: list[str] | None = None
+    state: dict | None, arm_service: str = "alarm_arm_night"
 ) -> HAAlarmTile:
     """
     An alarm tile with mocked HA client, controller and deck.
@@ -1946,7 +1947,7 @@ def make_alarm_tile(
     )
     ha.call_service = AsyncMock()
     tile = HAAlarmTile(
-        0, ha, "alarm_control_panel.home_alarm", arm_modes=arm_modes or []
+        0, ha, "alarm_control_panel.home_alarm", arm_service=arm_service
     )
     tile.controller = AsyncMock()
     tile.controller.draw_tile.return_value = b"tile"
@@ -1954,9 +1955,7 @@ def make_alarm_tile(
     return tile
 
 
-def make_alarm_dial(
-    state: dict | None, arm_modes: list[str] | None = None
-) -> HAAlarmDial:
+def make_alarm_dial(state: dict | None) -> HAAlarmDial:
     """
     An alarm dial with mocked HA client, controller and deck.
     """
@@ -1964,9 +1963,7 @@ def make_alarm_dial(
     ha.subscribe.return_value = lambda: None
     ha.get_state.return_value = state
     ha.call_service = AsyncMock()
-    dial = HAAlarmDial(
-        0, ha, "alarm_control_panel.home_alarm", arm_modes=arm_modes or []
-    )
+    dial = HAAlarmDial(0, ha, "alarm_control_panel.home_alarm")
     dial.controller = AsyncMock()
     dial.controller.draw_dial_tile_scroller.return_value = Image.new(
         "RGBA", (140, 100)
@@ -2058,7 +2055,7 @@ class TestHAAlarmTile:
         await tile.set_tile()
         tile.controller.draw_tile.assert_awaited_once_with(
             "Home Alarm",
-            {"icon-primary": "icon-active"},
+            {"icon-primary": "icon-alert"},
             "bell-ring",
             subtitle="Triggered",
             badge=None,
@@ -2067,7 +2064,7 @@ class TestHAAlarmTile:
     @pytest.mark.asyncio
     async def test_key_arms(self) -> None:
         """
-        Pressing a disarmed alarm arms the first configured mode.
+        Pressing a disarmed alarm arms with the configured service.
         """
         tile = make_alarm_tile(
             {
@@ -2075,12 +2072,12 @@ class TestHAAlarmTile:
                 "state": "disarmed",
                 "attributes": {},
             },
-            arm_modes=["armed_home", "armed_away"],
+            arm_service="alarm_arm_night",
         )
         await tile.on_key_change(True)
         tile.ha.call_service.assert_awaited_once_with(
             "alarm_control_panel",
-            "alarm_arm_home",
+            "alarm_arm_night",
             entity_id="alarm_control_panel.home_alarm",
         )
 
@@ -2104,9 +2101,9 @@ class TestHAAlarmTile:
         )
 
     @pytest.mark.asyncio
-    async def test_key_transitioning(self) -> None:
+    async def test_key_arming_disarms(self) -> None:
         """
-        Pressing a transitioning alarm does nothing.
+        Pressing an arming alarm disarms it, like the HA UI.
         """
         tile = make_alarm_tile(
             {
@@ -2116,7 +2113,49 @@ class TestHAAlarmTile:
             }
         )
         await tile.on_key_change(True)
-        tile.ha.call_service.assert_not_called()
+        tile.ha.call_service.assert_awaited_once_with(
+            "alarm_control_panel",
+            "alarm_disarm",
+            entity_id="alarm_control_panel.home_alarm",
+        )
+
+    @pytest.mark.asyncio
+    async def test_key_triggered_disarms(self) -> None:
+        """
+        Pressing a triggered alarm disarms it.
+        """
+        tile = make_alarm_tile(
+            {
+                "entity_id": "alarm_control_panel.home_alarm",
+                "state": "triggered",
+                "attributes": {},
+            }
+        )
+        await tile.on_key_change(True)
+        tile.ha.call_service.assert_awaited_once_with(
+            "alarm_control_panel",
+            "alarm_disarm",
+            entity_id="alarm_control_panel.home_alarm",
+        )
+
+    @pytest.mark.asyncio
+    async def test_key_disarming_disarms(self) -> None:
+        """
+        Pressing a disarming alarm disarms it.
+        """
+        tile = make_alarm_tile(
+            {
+                "entity_id": "alarm_control_panel.home_alarm",
+                "state": "disarming",
+                "attributes": {},
+            }
+        )
+        await tile.on_key_change(True)
+        tile.ha.call_service.assert_awaited_once_with(
+            "alarm_control_panel",
+            "alarm_disarm",
+            entity_id="alarm_control_panel.home_alarm",
+        )
 
     @pytest.mark.asyncio
     async def test_key_release(self) -> None:
@@ -2152,8 +2191,7 @@ class TestHAAlarmTile:
                 "entity_id": "alarm_control_panel.home_alarm",
                 "state": "disarmed",
                 "attributes": {},
-            },
-            arm_modes=["armed_home"],
+            }
         )
         tile.ha.call_service = AsyncMock(side_effect=Exception("boom"))
         await tile.on_key_change(True)
@@ -2235,6 +2273,31 @@ class TestHAAlarmTile:
         )
 
 
+class TestAlarmModeScrollerItem:
+    """
+    Tests for L{megingjord.ha.AlarmModeScrollerItem}.
+    """
+
+    def test_known_state(self) -> None:
+        """
+        Known states use the alarm titles and icons.
+        """
+        item = AlarmModeScrollerItem("armed_away", current=True)
+        assert item.title == "Armed away"
+        assert item.icon == "shield-lock"
+        assert item.current
+
+    def test_unknown_state(self) -> None:
+        """
+        Unknown states fall back to generic title and icon.
+        """
+        item = AlarmModeScrollerItem("unavailable")
+        assert item.title == "Unavailable"
+        assert item.icon == "shield"
+        assert not item.current
+        assert item.subtitle is None
+
+
 class TestHAAlarmDial:
     """
     Tests for L{megingjord.ha.HAAlarmDial}.
@@ -2243,15 +2306,14 @@ class TestHAAlarmDial:
     @pytest.mark.asyncio
     async def test_update_view(self) -> None:
         """
-        The view lists disarmed and the supported arm modes.
+        The view lists disarmed and all supported arm modes.
         """
         dial = make_alarm_dial(
             {
                 "entity_id": "alarm_control_panel.home_alarm",
                 "state": "disarmed",
                 "attributes": {"supported_features": 7},
-            },
-            arm_modes=["armed_home", "armed_away", "armed_night"],
+            }
         )
         await dial.update_view()
         assert dial.current_view is not None
@@ -2268,7 +2330,7 @@ class TestHAAlarmDial:
         """
         Without a state, only disarmed is offered.
         """
-        dial = make_alarm_dial(None, arm_modes=["armed_home", "armed_away"])
+        dial = make_alarm_dial(None)
         await dial.update_view()
         assert [item.wrapped for item in dial.current_view.items] == [
             "disarmed"
@@ -2285,8 +2347,7 @@ class TestHAAlarmDial:
                 "entity_id": "alarm_control_panel.home_alarm",
                 "state": "disarmed",
                 "attributes": {"supported_features": 1},
-            },
-            arm_modes=["armed_home", "armed_away", "armed_night"],
+            }
         )
         await dial.update_view()
         assert [item.wrapped for item in dial.current_view.items] == [
@@ -2295,46 +2356,55 @@ class TestHAAlarmDial:
         ]
 
     @pytest.mark.asyncio
-    async def test_update_view_unknown_state(self) -> None:
+    async def test_update_view_all_features(self) -> None:
         """
-        An unknown state falls back to generic title and icon.
-        """
-        dial = make_alarm_dial(
-            {
-                "entity_id": "alarm_control_panel.home_alarm",
-                "state": "unavailable",
-                "attributes": {"supported_features": 7},
-            },
-            arm_modes=["armed_home"],
-        )
-        await dial.update_view()
-        item = dial.current_view.items[-1]
-        assert item.title == "Unavailable"
-        assert item.icon == "shield"
-        assert item.subtitle is None
-
-    @pytest.mark.asyncio
-    async def test_update_view_transient(self) -> None:
-        """
-        A transient state is shown as the current item.
+        All arm modes are offered when all features are supported.
         """
         dial = make_alarm_dial(
             {
                 "entity_id": "alarm_control_panel.home_alarm",
-                "state": "arming",
-                "attributes": {"supported_features": 7},
-            },
-            arm_modes=["armed_home", "armed_away"],
+                "state": "disarmed",
+                "attributes": {"supported_features": 63},
+            }
         )
         await dial.update_view()
         assert [item.wrapped for item in dial.current_view.items] == [
             "disarmed",
             "armed_home",
             "armed_away",
-            "arming",
+            "armed_night",
+            "armed_custom_bypass",
+            "armed_vacation",
         ]
-        assert dial.current_view.selected == 3
-        assert dial.current_view.selected_item.current
+
+    @pytest.mark.asyncio
+    async def test_update_view_transient(self) -> None:
+        """
+        A transient state is not an item; the selection is kept.
+        """
+        dial = make_alarm_dial(
+            {
+                "entity_id": "alarm_control_panel.home_alarm",
+                "state": "disarmed",
+                "attributes": {"supported_features": 7},
+            }
+        )
+        await dial.update_view()
+        dial.current_view.selected = 1
+        dial.ha.get_state.return_value = {
+            "entity_id": "alarm_control_panel.home_alarm",
+            "state": "arming",
+            "attributes": {"supported_features": 7},
+        }
+        await dial.update_view()
+        assert [item.wrapped for item in dial.current_view.items] == [
+            "disarmed",
+            "armed_home",
+            "armed_away",
+            "armed_night",
+        ]
+        assert dial.current_view.selected == 1
+        assert not any(item.current for item in dial.current_view.items)
 
     @pytest.mark.asyncio
     async def test_on_dial_turn(self) -> None:
@@ -2346,8 +2416,7 @@ class TestHAAlarmDial:
                 "entity_id": "alarm_control_panel.home_alarm",
                 "state": "disarmed",
                 "attributes": {"supported_features": 7},
-            },
-            arm_modes=["armed_home", "armed_away"],
+            }
         )
         await dial.update_view()
         await dial.on_dial_turn(1)
@@ -2368,8 +2437,7 @@ class TestHAAlarmDial:
                 "entity_id": "alarm_control_panel.home_alarm",
                 "state": "disarmed",
                 "attributes": {"supported_features": 7},
-            },
-            arm_modes=["armed_home"],
+            }
         )
         dial.controller = None
         await dial.on_dial_turn(1)
@@ -2384,8 +2452,7 @@ class TestHAAlarmDial:
                 "entity_id": "alarm_control_panel.home_alarm",
                 "state": "disarmed",
                 "attributes": {"supported_features": 7},
-            },
-            arm_modes=["armed_home"],
+            }
         )
         await dial.update_view()
         await dial.on_dial_push(False)
@@ -2401,8 +2468,7 @@ class TestHAAlarmDial:
                 "entity_id": "alarm_control_panel.home_alarm",
                 "state": "disarmed",
                 "attributes": {"supported_features": 7},
-            },
-            arm_modes=["armed_home", "armed_away"],
+            }
         )
         await dial.update_view()
         dial.current_view.selected = 1
@@ -2423,8 +2489,7 @@ class TestHAAlarmDial:
                 "entity_id": "alarm_control_panel.home_alarm",
                 "state": "armed_away",
                 "attributes": {"supported_features": 7},
-            },
-            arm_modes=["armed_home", "armed_away"],
+            }
         )
         await dial.update_view()
         dial.current_view.selected = 0
@@ -2436,23 +2501,6 @@ class TestHAAlarmDial:
         )
 
     @pytest.mark.asyncio
-    async def test_on_dial_push_transient(self) -> None:
-        """
-        Pushing a transient state does nothing.
-        """
-        dial = make_alarm_dial(
-            {
-                "entity_id": "alarm_control_panel.home_alarm",
-                "state": "arming",
-                "attributes": {"supported_features": 7},
-            },
-            arm_modes=["armed_home", "armed_away"],
-        )
-        await dial.update_view()
-        await dial.on_dial_push(True)
-        dial.ha.call_service.assert_not_called()
-
-    @pytest.mark.asyncio
     async def test_on_dial_push_service_error(self) -> None:
         """
         A failed service call is logged, not raised.
@@ -2462,8 +2510,7 @@ class TestHAAlarmDial:
                 "entity_id": "alarm_control_panel.home_alarm",
                 "state": "disarmed",
                 "attributes": {"supported_features": 7},
-            },
-            arm_modes=["armed_home"],
+            }
         )
         dial.ha.call_service = AsyncMock(side_effect=Exception("boom"))
         await dial.update_view()
@@ -2483,8 +2530,7 @@ class TestHAAlarmDial:
                     "supported_features": 7,
                     "code_arm_required": True,
                 },
-            },
-            arm_modes=["armed_home"],
+            }
         )
         await dial.update_view()
         dial.current_view.selected = 1
@@ -2501,8 +2547,7 @@ class TestHAAlarmDial:
                 "entity_id": "alarm_control_panel.home_alarm",
                 "state": "disarmed",
                 "attributes": {"supported_features": 7},
-            },
-            arm_modes=["armed_home"],
+            }
         )
         dial.controller = None
         dial.ha.get_state.return_value = {
@@ -2523,8 +2568,7 @@ class TestHAAlarmDial:
                 "entity_id": "alarm_control_panel.home_alarm",
                 "state": "disarmed",
                 "attributes": {"supported_features": 7},
-            },
-            arm_modes=["armed_home", "armed_away"],
+            }
         )
         await dial.update_view()
         dial.ha.get_state.return_value = {
@@ -2547,8 +2591,7 @@ class TestHAAlarmDial:
                 "entity_id": "alarm_control_panel.home_alarm",
                 "state": "disarmed",
                 "attributes": {"supported_features": 7},
-            },
-            arm_modes=["armed_home"],
+            }
         )
         await dial.update_view()
         await dial.render()
@@ -2566,8 +2609,7 @@ class TestHAAlarmDial:
                 "entity_id": "alarm_control_panel.home_alarm",
                 "state": "disarmed",
                 "attributes": {"supported_features": 7},
-            },
-            arm_modes=["armed_home"],
+            }
         )
         dial.controller = None
         image = await dial.render()
@@ -2583,8 +2625,7 @@ class TestHAAlarmDial:
                 "entity_id": "alarm_control_panel.home_alarm",
                 "state": "disarmed",
                 "attributes": {"supported_features": 7},
-            },
-            arm_modes=["armed_home"],
+            }
         )
         await dial.start(MagicMock())
         dial.ha.subscribe.assert_called_once_with(
@@ -2604,8 +2645,7 @@ class TestHAAlarmDial:
                 "entity_id": "alarm_control_panel.home_alarm",
                 "state": "disarmed",
                 "attributes": {"supported_features": 7},
-            },
-            arm_modes=["armed_home"],
+            }
         )
         dial.ha.subscribe.return_value = MagicMock()
         await dial.start(MagicMock())
@@ -2623,8 +2663,7 @@ class TestHAAlarmDial:
                 "entity_id": "alarm_control_panel.home_alarm",
                 "state": "disarmed",
                 "attributes": {"supported_features": 7},
-            },
-            arm_modes=["armed_home"],
+            }
         )
         dial.ha.subscribe.return_value = MagicMock()
         await dial.start(MagicMock())

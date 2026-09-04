@@ -20,7 +20,7 @@ from PIL import Image
 from StreamDeck.Devices.StreamDeck import StreamDeck
 
 from .color_utils import is_dark, rgb_to_hex, scale_rgb_down
-from .streamdeck import DeckController
+from .streamdeck import DeckController, ScrollerItem, ScrollerView
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +43,54 @@ DOMAIN_ICONS = {
     "number": "numeric",
     "binary_sensor": "toggle-switch",
     "sensor": "numeric",
+    "cover": "window-open",
+    "alarm_control_panel": "shield",
 }
+
+# Alarm control panel states, services and icons.
+ALARM_FEATURES = {
+    "armed_home": 1,
+    "armed_away": 2,
+    "armed_night": 4,
+    "armed_custom_bypass": 16,
+    "armed_vacation": 32,
+}
+
+ALARM_SERVICES = {
+    "disarmed": "alarm_disarm",
+    "armed_home": "alarm_arm_home",
+    "armed_away": "alarm_arm_away",
+    "armed_night": "alarm_arm_night",
+    "armed_vacation": "alarm_arm_vacation",
+    "armed_custom_bypass": "alarm_arm_custom_bypass",
+}
+
+ALARM_ICONS = {
+    "disarmed": "shield-off",
+    "armed_home": "shield-home",
+    "armed_away": "shield-lock",
+    "armed_night": "shield-moon",
+    "armed_vacation": "shield-airplane",
+    "armed_custom_bypass": "security",
+    "pending": "shield-outline",
+    "triggered": "bell-ring",
+}
+
+ALARM_TITLES = {
+    "disarmed": "Disarmed",
+    "armed_home": "Armed home",
+    "armed_away": "Armed away",
+    "armed_night": "Armed night",
+    "armed_vacation": "Armed vacation",
+    "armed_custom_bypass": "Custom bypass",
+    "pending": "Pending",
+    "arming": "Arming",
+    "disarming": "Disarming",
+    "triggered": "Triggered",
+}
+
+# States during which arming or disarming is in progress.
+ALARM_TRANSITIONING = frozenset({"pending", "arming", "disarming"})
 
 
 def normalize_url(url: str) -> str:
@@ -133,6 +180,13 @@ def icon_from_translations(
     return translations.get("default")
 
 
+def strip_mdi(icon: str) -> str:
+    """
+    Strip the mdi: prefix from an icon name.
+    """
+    return icon[4:] if icon.startswith("mdi:") else icon
+
+
 def get_state_text(state: dict[str, Any]) -> str:
     """
     Get a human-readable state text for an entity.
@@ -156,7 +210,7 @@ def get_state_text(state: dict[str, Any]) -> str:
     if domain == "switch":
         return "On" if value == "on" else "Off"
 
-    return value.title() if value else ""
+    return value.replace("_", " ").capitalize() if value else ""
 
 
 @define
@@ -180,6 +234,9 @@ class HAWebSocketClient:
         init=False, factory=dict
     )
     platform_icons: dict[str, dict[str, Any] | None] = field(
+        init=False, factory=dict
+    )
+    component_icons: dict[str, dict[str, Any] | None] = field(
         init=False, factory=dict
     )
     subscribers: dict[
@@ -258,6 +315,7 @@ class HAWebSocketClient:
             self.missing.clear()
             self.registry_entries.clear()
             self.platform_icons.clear()
+            self.component_icons.clear()
             await self._notify_all()
             logger.info("Disconnected from Home Assistant")
 
@@ -508,12 +566,15 @@ class HAWebSocketClient:
             return icon
         entity_icon = attributes.get("icon")
         if isinstance(entity_icon, str) and entity_icon.startswith("mdi:"):
-            return entity_icon[4:]
+            return strip_mdi(entity_icon)
         translation_icon = await self._get_translation_icon(entity_id, state)
         if translation_icon is not None:
-            if translation_icon.startswith("mdi:"):
-                return translation_icon[4:]
-            return translation_icon
+            return strip_mdi(translation_icon)
+        component_icon = await self._get_component_icon(
+            entity_id, attributes, state
+        )
+        if component_icon is not None:
+            return strip_mdi(component_icon)
         return get_entity_icon(entity_id, attributes)
 
     async def _get_translation_icon(
@@ -572,6 +633,53 @@ class HAWebSocketClient:
                 platform
             )
         return self.platform_icons[platform]
+
+    async def _get_component_icon(
+        self,
+        entity_id: str,
+        attributes: dict[str, Any],
+        state: str | None,
+    ) -> str | None:
+        """
+        Resolve the icon from the component's device-class icons.
+        """
+        if self.client is None:
+            return None
+        try:
+            domain = entity_id.split(".")[0]
+            icons = await self._get_component_icons(domain)
+            if icons is None:
+                return None
+            device_class = attributes.get("device_class")
+            translations = (
+                icons.get(device_class)
+                if isinstance(device_class, str)
+                else None
+            )
+            if translations is None:
+                translations = icons.get("_")
+            return icon_from_translations(state, translations)
+        except Exception:  # pylint: disable=W0718
+            logger.warning(
+                "Failed to resolve icon for %s", entity_id, exc_info=True
+            )
+            return None
+
+    async def _get_component_icons(self, domain: str) -> dict[str, Any] | None:
+        """
+        Get the component's entity icons, cached per domain.
+        """
+        if domain not in self.component_icons:
+            assert self.client is not None
+            result = await self.client.send_command(
+                "frontend/get_icons",
+                category="entity_component",
+                integration=[domain],
+            )
+            self.component_icons[domain] = result.get("resources", {}).get(
+                domain
+            )
+        return self.component_icons[domain]
 
     async def call_service(
         self,
@@ -910,3 +1018,252 @@ class HAEntityDial:
                 entity_id=self.entity_id,
                 data={"volume_level": pct},
             )
+
+
+@define
+class HAAlarmTile(HAEntityTile):
+    """
+    Stream Deck key for arming and disarming an alarm control panel.
+    """
+
+    arm_modes: list[str] = field(factory=list)
+
+    async def on_key_change(self, key_state: bool) -> None:
+        """
+        Called when the key got pressed or released.
+        """
+        if not key_state:
+            return
+
+        state = self.ha.get_state(self.entity_id)
+        if state is None:
+            return
+
+        value = state["state"]
+        if value in ALARM_TRANSITIONING:
+            return
+
+        if value == "disarmed":
+            mode = self.arm_modes[0] if self.arm_modes else "armed_away"
+            service = ALARM_SERVICES[mode]
+        else:
+            service = "alarm_disarm"
+
+        try:
+            await self.ha.call_service(
+                "alarm_control_panel", service, entity_id=self.entity_id
+            )
+        except Exception:  # pylint: disable=W0718
+            logger.error(
+                "Failed to %s %s", service, self.entity_id, exc_info=True
+            )
+            await self.set_tile()
+
+    async def set_tile(self) -> None:
+        """
+        Draw the tile based on the alarm state.
+        """
+        if not self.controller or not self.deck:
+            return
+
+        state = self.ha.get_state(self.entity_id)
+
+        if state is None:
+            text = "Disconnected"
+            icon = "cloud-question-outline"
+            subtitle = None
+            badge = None
+            colors = {
+                "icon-primary": "icon-inactive",
+                "tile-bg": "tile-inactive-bg",
+            }
+        else:
+            attributes = state.get("attributes", {})
+            text = attributes.get("friendly_name", self.entity_id)
+            value = state["state"]
+            icon = await self.ha.get_entity_icon(
+                self.entity_id, attributes, self.icon, value
+            )
+            if icon == DOMAIN_ICONS.get("alarm_control_panel"):
+                icon = ALARM_ICONS.get(value, icon)
+            subtitle = get_state_text(state)
+            badge = None
+            if value == "unavailable":
+                badge = "alert-circle"
+                colors = {
+                    "icon-primary": "icon-inactive",
+                    "tile-bg": "tile-inactive-bg",
+                }
+            elif value in ALARM_TRANSITIONING or value == "disarmed":
+                colors = {
+                    "icon-primary": "icon-inactive",
+                    "tile-bg": "tile-inactive-bg",
+                }
+            else:
+                colors = {"icon-primary": "icon-active"}
+
+        logger.debug(f"Setting key {self.key} to icon {icon}: {text!r}")
+
+        tile = await self.controller.draw_tile(
+            text,
+            colors,
+            icon,
+            subtitle=subtitle,
+            badge=badge,
+        )
+        self.deck.set_key_image(self.key, tile)
+
+
+@define
+class AlarmModeScrollerItem(ScrollerItem):
+    """
+    L{ScrollerItem} wrapper for an alarm control panel state.
+    """
+
+    wrapped: str
+    current: bool = False
+
+    @property
+    def title(self) -> str:
+        return ALARM_TITLES.get(
+            self.wrapped, self.wrapped.replace("_", " ").capitalize()
+        )
+
+    @property
+    def subtitle(self) -> str | None:
+        return None
+
+    @property
+    def icon(self) -> str:
+        return ALARM_ICONS.get(self.wrapped, "shield")
+
+
+@define
+class HAAlarmDial:
+    """
+    Stream Deck dial for arming and disarming an alarm control panel.
+    """
+
+    dial: int
+    ha: HAWebSocketClient
+    entity_id: str
+    arm_modes: list[str] = field(factory=list)
+
+    controller: DeckController | None = field(init=False)
+    deck: StreamDeck = field(init=False)
+    unsubscribes: list[Callable[[], None]] = field(init=False, factory=list)
+    current_view: ScrollerView | None = field(init=False, default=None)
+
+    async def start(self, deck: StreamDeck) -> None:
+        """
+        Start this dial.
+        """
+        self.deck = deck
+        self.unsubscribes = [self.ha.subscribe(self.entity_id, self.on_state)]
+        await self.update_view()
+        await self.render()
+
+    async def stop(self) -> None:
+        """
+        Stop this dial.
+        """
+        for unsubscribe in self.unsubscribes:
+            unsubscribe()
+
+        if self.controller is not None:
+            await self.controller.render_lcd(tile_changed=self.dial)
+
+    async def on_state(self, state: dict[str, Any] | None) -> None:
+        """
+        The alarm state changed.
+        """
+        await self.update_view()
+        if self.controller is not None:
+            await self.controller.render_lcd(tile_changed=self.dial)
+
+    async def update_view(self) -> None:
+        """
+        Rebuild the scroller view for the current state.
+        """
+        state = self.ha.get_state(self.entity_id)
+        if state is not None:
+            attributes = state.get("attributes", {})
+            supported_features = attributes.get("supported_features", 0)
+            value = state["state"]
+        else:
+            supported_features = 0
+            value = None
+
+        items: list[AlarmModeScrollerItem] = []
+        selected = 0
+        for mode in ["disarmed", *self.arm_modes]:
+            if mode != "disarmed" and not (
+                supported_features & ALARM_FEATURES.get(mode, 0)
+            ):
+                continue
+            items.append(AlarmModeScrollerItem(mode, current=mode == value))
+            if mode == value:
+                selected = len(items) - 1
+        if value and value not in {item.wrapped for item in items}:
+            items.append(AlarmModeScrollerItem(value, current=True))
+            selected = len(items) - 1
+        self.current_view = ScrollerView(items=items, selected=selected)
+
+    async def on_dial_turn(self, value: int) -> None:
+        """
+        Called when the dial got turned.
+        """
+        if not self.controller or not self.current_view:
+            return
+
+        if value < 0:
+            self.current_view.selected = max(
+                0, self.current_view.selected + value
+            )
+        else:
+            self.current_view.selected = min(
+                len(self.current_view.items) - 1,
+                self.current_view.selected + value,
+            )
+
+        await self.controller.render_lcd(tile_changed=self.dial)
+
+    async def on_dial_push(self, dial_state: bool) -> None:
+        """
+        Called when the dial got pressed or released.
+        """
+        if not dial_state or not self.controller or not self.current_view:
+            return
+
+        mode = self.current_view.selected_item.wrapped
+        assert isinstance(mode, str)
+        service = ALARM_SERVICES.get(mode)
+        if service is None:
+            return
+        state = self.ha.get_state(self.entity_id)
+        code_arm_required = bool(
+            state and state.get("attributes", {}).get("code_arm_required")
+        )
+        if mode != "disarmed" and code_arm_required:
+            logger.warning("Arming %s requires a code", self.entity_id)
+            return
+
+        try:
+            await self.ha.call_service(
+                "alarm_control_panel", service, entity_id=self.entity_id
+            )
+        except Exception:  # pylint: disable=W0718
+            logger.error(
+                "Failed to %s %s", service, self.entity_id, exc_info=True
+            )
+
+    async def render(self, mini: bool = False) -> Image.Image:
+        """
+        Render the portion of the LCD display (tile) for this dial.
+        """
+        if not self.deck or not self.controller or not self.current_view:
+            return Image.new("RGBA", (140, 100), "#00000000")
+
+        return await self.controller.draw_dial_tile_scroller(
+            self.current_view, mini=mini
+        )

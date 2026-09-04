@@ -127,6 +127,7 @@ class HAWebSocketClient:
 
     client: HomeAssistantClient | None = field(init=False, default=None)
     states: dict[str, dict[str, Any]] = field(init=False, factory=dict)
+    missing: set[str] = field(init=False, factory=set)
     subscribers: dict[
         str, set[Callable[[dict[str, Any] | None], Coroutine[Any, Any, None]]]
     ] = field(init=False, factory=dict)
@@ -200,6 +201,7 @@ class HAWebSocketClient:
                     await listener
             self._connected = False
             self.states = {}
+            self.missing.clear()
             await self._notify_all()
             logger.info("Disconnected from Home Assistant")
 
@@ -212,6 +214,7 @@ class HAWebSocketClient:
         """
         for entity_id, state in event.get("a", {}).items():
             self.states[entity_id] = self._expand_state(entity_id, state)
+            self.missing.discard(entity_id)
             self._notify(entity_id, self.states[entity_id])
 
         for entity_id in event.get("r", []):
@@ -388,11 +391,24 @@ class HAWebSocketClient:
         if self.client is None:
             return
 
-        task = asyncio.create_task(
-            self.client.subscribe_entities(self._on_entity_event, [entity_id])
-        )
+        task = asyncio.create_task(self._subscribe_entity_async(entity_id))
         self.tasks.add(task)
         task.add_done_callback(partial(self._on_subscribe_done, entity_id))
+
+    async def _subscribe_entity_async(self, entity_id: str) -> None:
+        """
+        Subscribe to an entity, marking it missing when it has no state.
+
+        The initial states arrive with the subscription result, so an
+        entity without a state after subscribing does not exist.
+        """
+        assert self.client is not None
+        await self.client.subscribe_entities(
+            self._on_entity_event, [entity_id]
+        )
+        if entity_id not in self.states:
+            self.missing.add(entity_id)
+            self._notify(entity_id, None)
 
     def _on_subscribe_done(
         self, entity_id: str, task: asyncio.Task[Any]
@@ -414,6 +430,12 @@ class HAWebSocketClient:
         Get the current state for an entity.
         """
         return self.states.get(entity_id)
+
+    def is_missing(self, entity_id: str) -> bool:
+        """
+        Whether the entity does not exist in Home Assistant.
+        """
+        return entity_id in self.missing
 
     async def call_service(
         self,
@@ -500,8 +522,12 @@ class HAEntityTile:
         state = self.ha.get_state(self.entity_id)
 
         if state is None:
-            text = "Disconnected"
-            icon = "cloud-question-outline"
+            if self.ha.is_missing(self.entity_id):
+                text = "Entity not found"
+                icon = "alert-outline"
+            else:
+                text = "Disconnected"
+                icon = "cloud-question-outline"
             subtitle = None
             badge = None
             colors = {
@@ -612,8 +638,12 @@ class HAEntityDial:
         state = self.ha.get_state(self.entity_id)
 
         if state is None:
-            title = "Disconnected"
-            icon = "cloud-question-outline"
+            if self.ha.is_missing(self.entity_id):
+                title = "Entity not found"
+                icon = "alert-outline"
+            else:
+                title = "Disconnected"
+                icon = "cloud-question-outline"
             value = 0.0
         else:
             attributes = state.get("attributes", {})

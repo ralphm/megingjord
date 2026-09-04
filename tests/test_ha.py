@@ -167,6 +167,51 @@ class TestHAWebSocketClient:
         assert callback not in client.subscribers["light.test"]
 
     @pytest.mark.asyncio
+    async def test_subscribe_missing(
+        self, ha_client: tuple[HAWebSocketClient, MagicMock]
+    ) -> None:
+        """
+        Subscribing to a non-existent entity marks it missing.
+        """
+        client, mock_class = ha_client
+        mock = mock_class.return_value
+        mock.subscribe_entities = AsyncMock()
+        notified: list[dict | None] = []
+
+        async def callback(state: dict | None) -> None:
+            notified.append(state)
+
+        client._connected = True
+        client.subscribe("light.test", callback)
+        await asyncio.sleep(0.05)
+        assert client.is_missing("light.test")
+        assert notified == [None]
+
+    @pytest.mark.asyncio
+    async def test_subscribe_missing_cleared(
+        self, ha_client: tuple[HAWebSocketClient, MagicMock]
+    ) -> None:
+        """
+        A state arriving for a missing entity clears the flag.
+        """
+        client, mock_class = ha_client
+        mock = mock_class.return_value
+        mock.subscribe_entities = AsyncMock()
+
+        async def callback(state: dict | None) -> None:
+            pass
+
+        client._connected = True
+        client.subscribe("light.test", callback)
+        await asyncio.sleep(0.05)
+        assert client.is_missing("light.test")
+        client._on_entity_event(
+            {"a": {"light.test": {"s": "on", "a": {"brightness": 128}}}}
+        )
+        assert not client.is_missing("light.test")
+        assert client.get_state("light.test")["state"] == "on"
+
+    @pytest.mark.asyncio
     async def test_call_service(
         self, ha_client: tuple[HAWebSocketClient, MagicMock]
     ) -> None:
@@ -518,6 +563,7 @@ def tile() -> HAEntityTile:
     ha = MagicMock()
     ha.subscribe.return_value = lambda: None
     ha.get_state.return_value = None
+    ha.is_missing.return_value = False
     tile = HAEntityTile(0, ha, "light.test")
     tile.controller = AsyncMock()
     tile.controller.draw_tile.return_value = b"tile"
@@ -598,6 +644,21 @@ class TestHAEntityTile:
             "Disconnected",
             {"icon-primary": "icon-inactive", "tile-bg": "tile-inactive-bg"},
             "cloud-question-outline",
+            subtitle=None,
+            badge=None,
+        )
+
+    @pytest.mark.asyncio
+    async def test_set_tile_missing(self, tile: HAEntityTile) -> None:
+        """
+        A missing entity shows entity not found.
+        """
+        tile.ha.is_missing.return_value = True
+        await tile.set_tile()
+        tile.controller.draw_tile.assert_awaited_once_with(
+            "Entity not found",
+            {"icon-primary": "icon-inactive", "tile-bg": "tile-inactive-bg"},
+            "alert-outline",
             subtitle=None,
             badge=None,
         )
@@ -694,6 +755,7 @@ def make_dial(entity_id: str, state: dict | None) -> HAEntityDial:
     ha = MagicMock()
     ha.subscribe.return_value = lambda: None
     ha.get_state.return_value = state
+    ha.is_missing.return_value = False
     dial = HAEntityDial(0, ha, entity_id)
     dial.controller = AsyncMock()
     dial.controller.draw_dial_tile.return_value = Image.new("RGBA", (140, 100))
@@ -787,6 +849,20 @@ class TestHAEntityDial:
         dial.controller.draw_dial_tile.assert_awaited_once_with(
             title="Disconnected",
             icon="cloud-question-outline",
+            value=0.0,
+            mini=False,
+        )
+
+    @pytest.mark.asyncio
+    async def test_render_missing(self, dial: HAEntityDial) -> None:
+        """
+        A missing entity shows entity not found.
+        """
+        dial.ha.is_missing.return_value = True
+        await dial.render()
+        dial.controller.draw_dial_tile.assert_awaited_once_with(
+            title="Entity not found",
+            icon="alert-outline",
             value=0.0,
             mini=False,
         )

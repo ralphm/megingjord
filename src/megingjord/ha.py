@@ -24,6 +24,10 @@ from .streamdeck import DeckController
 
 logger = logging.getLogger(__name__)
 
+# Delay before sending a dial value, coalescing rapid turns into a single
+# command so the entity does not step through intermediate values.
+SEND_DELAY_SECONDS = 0.1
+
 
 # Icon shown for the off state of known entity types.
 OFF_ICONS = {
@@ -563,6 +567,7 @@ class HAEntityDial:
     value: float = field(init=False, default=0.0)
     pending: int = field(init=False, default=0)
     tasks: set[asyncio.Task[None]] = field(init=False, factory=set)
+    send_task: asyncio.Task[None] | None = field(init=False, default=None)
 
     async def start(self, deck: StreamDeck) -> None:
         """
@@ -581,6 +586,9 @@ class HAEntityDial:
         """
         for unsubscribe in self.unsubscribes:
             unsubscribe()
+
+        if self.send_task is not None:
+            self.send_task.cancel()
 
         if self.controller is not None:
             await self.controller.render_lcd(tile_changed=self.dial)
@@ -632,18 +640,28 @@ class HAEntityDial:
         change = round(value / abs(value) * (1.6 ** abs(value) - 1))
         self.value = min(max(self.value + change / 100.0, 0.0), 1.0)
         await self.controller.render_lcd(tile_changed=self.dial)
+        self._schedule_send()
 
-        self.pending += 1
-        task = asyncio.create_task(self._send_value(self.value))
-        self.tasks.add(task)
-        task.add_done_callback(self.tasks.discard)
-
-    async def _send_value(self, pct: float) -> None:
+    def _schedule_send(self) -> None:
         """
-        Send the value to the entity, tracking pending commands.
+        Schedule sending the value, coalescing rapid turns.
+        """
+        if self.send_task is not None:
+            self.send_task.cancel()
+        self.send_task = asyncio.create_task(self._send_later())
+
+    async def _send_later(self) -> None:
+        """
+        Send the value after a short delay.
         """
         try:
-            await self._set_value(pct)
+            await asyncio.sleep(SEND_DELAY_SECONDS)
+        except asyncio.CancelledError:
+            return
+
+        self.pending += 1
+        try:
+            await self._set_value(self.value)
         except Exception:  # pylint: disable=W0718
             logger.error("Failed to set %s", self.entity_id, exc_info=True)
         finally:

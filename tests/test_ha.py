@@ -12,6 +12,7 @@ from aiohttp import web
 from PIL import Image
 
 from megingjord.ha import (
+    SEND_DELAY_SECONDS,
     HAEntityDial,
     HAEntityTile,
     HAWebSocketClient,
@@ -871,11 +872,30 @@ class TestHAEntityDial:
         await dial.on_dial_turn(1)
         assert dial.value == pytest.approx(0.01)
         dial.controller.render_lcd.assert_awaited_once_with(tile_changed=0)
-        while dial.pending > 0:
-            await asyncio.sleep(0.01)
+        await asyncio.sleep(SEND_DELAY_SECONDS + 0.05)
         dial.ha.call_service.assert_awaited_once()
         value = dial.ha.call_service.await_args.kwargs["data"]["value"]
         assert value == pytest.approx(1.0)
+
+    @pytest.mark.asyncio
+    async def test_on_dial_turn_coalesces(self, dial: HAEntityDial) -> None:
+        """
+        Rapid turns coalesce into a single command.
+        """
+        dial.ha.get_state.return_value = {
+            "entity_id": "number.test",
+            "state": "50",
+            "attributes": {"min": 0, "max": 100},
+        }
+        dial.ha.call_service = AsyncMock()
+        await dial.on_dial_turn(1)
+        await dial.on_dial_turn(1)
+        await dial.on_dial_turn(1)
+        assert dial.value == pytest.approx(0.03)
+        await asyncio.sleep(SEND_DELAY_SECONDS + 0.05)
+        dial.ha.call_service.assert_awaited_once()
+        value = dial.ha.call_service.await_args.kwargs["data"]["value"]
+        assert value == pytest.approx(3.0)
 
     @pytest.mark.asyncio
     async def test_on_dial_turn_disconnected(self, dial: HAEntityDial) -> None:
@@ -886,8 +906,7 @@ class TestHAEntityDial:
         await dial.on_dial_turn(1)
         assert dial.value == pytest.approx(0.01)
         dial.controller.render_lcd.assert_awaited_once_with(tile_changed=0)
-        while dial.pending > 0:
-            await asyncio.sleep(0.01)
+        await asyncio.sleep(SEND_DELAY_SECONDS + 0.05)
         dial.ha.call_service.assert_not_called()
 
     def test_get_value_number(self, dial: HAEntityDial) -> None:
@@ -1094,6 +1113,24 @@ class TestHAEntityDial:
         await dial.stop()
 
     @pytest.mark.asyncio
+    async def test_stop_cancels_send(self, dial: HAEntityDial) -> None:
+        """
+        Stopping cancels a pending send.
+        """
+        dial.ha.get_state.return_value = {
+            "entity_id": "number.test",
+            "state": "50",
+            "attributes": {"min": 0, "max": 100},
+        }
+        dial.ha.call_service = AsyncMock()
+        await dial.start(dial.deck)
+        await dial.on_dial_turn(1)
+        await asyncio.sleep(0.01)
+        await dial.stop()
+        await asyncio.sleep(SEND_DELAY_SECONDS + 0.05)
+        dial.ha.call_service.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_on_state_no_controller(self, dial: HAEntityDial) -> None:
         """
         A state change without a controller does not render the LCD.
@@ -1125,6 +1162,7 @@ class TestHAEntityDial:
         dial.ha.call_service = AsyncMock(side_effect=Exception("boom"))
         await dial.on_dial_turn(1)
         dial.controller.render_lcd.assert_awaited_once_with(tile_changed=0)
+        await asyncio.sleep(SEND_DELAY_SECONDS + 0.05)
         while dial.pending > 0:
             await asyncio.sleep(0.01)
 

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 from contextlib import suppress
 from datetime import datetime, timezone
 from functools import partial
@@ -91,6 +92,20 @@ ALARM_TITLES = {
 
 # States during which arming or disarming is in progress.
 ALARM_TRANSITIONING = frozenset({"pending", "arming", "disarming"})
+
+# States that are armed.
+ALARM_ARMED = frozenset(
+    {
+        "armed_home",
+        "armed_away",
+        "armed_night",
+        "armed_vacation",
+        "armed_custom_bypass",
+    }
+)
+
+# States that pulse the icon.
+ALARM_PULSING = frozenset({"pending", "triggered"})
 
 
 def normalize_url(url: str) -> str:
@@ -1028,6 +1043,12 @@ class HAAlarmTile(HAEntityTile):
 
     arm_service: str = field(kw_only=True)
 
+    _pulse_text: str = field(init=False, default="")
+    _pulse_icon: str = field(init=False, default="")
+    _pulse_subtitle: str | None = field(init=False, default=None)
+    _pulse_badge: str | None = field(init=False, default=None)
+    _pulse_rgb: tuple[int, int, int] = field(init=False, default=(0, 0, 0))
+
     async def on_key_change(self, key_state: bool) -> None:
         """
         Called when the key got pressed or released.
@@ -1090,8 +1111,10 @@ class HAAlarmTile(HAEntityTile):
                     "icon-primary": "icon-inactive",
                     "tile-bg": "tile-inactive-bg",
                 }
-            elif value == "triggered":
+            elif value in ALARM_PULSING:
                 colors = {"icon-primary": "icon-alert"}
+            elif value in ALARM_ARMED:
+                colors = {"icon-primary": "icon-ok"}
             elif value in ALARM_TRANSITIONING or value == "disarmed":
                 colors = {
                     "icon-primary": "icon-inactive",
@@ -1102,14 +1125,67 @@ class HAAlarmTile(HAEntityTile):
 
         logger.debug(f"Setting key {self.key} to icon {icon}: {text!r}")
 
-        tile = await self.controller.draw_tile(
-            text,
-            colors,
-            icon,
-            subtitle=subtitle,
-            badge=badge,
-        )
+        self._pulse_text = text
+        self._pulse_icon = icon
+        self._pulse_subtitle = subtitle
+        self._pulse_badge = badge
+        tile = await self._draw(colors)
         self.deck.set_key_image(self.key, tile)
+
+        if state is not None and state["state"] in ALARM_PULSING:
+            self._start_pulse()
+        else:
+            self._stop_pulse()
+
+    async def _draw(self, colors: dict[str, str]) -> bytes:
+        """
+        Draw the tile with the stored text and icon.
+        """
+        assert self.controller is not None
+        return await self.controller.draw_tile(
+            self._pulse_text,
+            colors,
+            self._pulse_icon,
+            subtitle=self._pulse_subtitle,
+            badge=self._pulse_badge,
+        )
+
+    def _start_pulse(self) -> None:
+        """
+        Start the icon pulse animation.
+        """
+        if self.controller is None:
+            return
+        hex_color = self.controller.get_color("icon-alert")
+        self._pulse_rgb = (
+            int(hex_color[1:3], 16),
+            int(hex_color[3:5], 16),
+            int(hex_color[5:7], 16),
+        )
+        self.controller.start_key_animation(self.key, self._render_pulse)
+
+    def _stop_pulse(self) -> None:
+        """
+        Stop the icon pulse animation.
+        """
+        if self.controller is not None:
+            self.controller.stop_key_animation(self.key)
+
+    async def _render_pulse(self, phase: float) -> bytes:
+        """
+        Render the tile with a pulsing icon.
+        """
+        alpha = 0.25 + 0.75 * (0.5 + 0.5 * math.sin(phase))
+        r, g, b = self._pulse_rgb
+        colors = {"icon-primary": f"rgba({r}, {g}, {b}, {alpha:.2f})"}
+        return await self._draw(colors)
+
+    async def stop(self) -> None:
+        """
+        Stop this key.
+        """
+        self._stop_pulse()
+        await super().stop()
 
 
 @define

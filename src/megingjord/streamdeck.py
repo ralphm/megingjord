@@ -14,7 +14,7 @@ import time
 from datetime import datetime
 from io import BytesIO
 from pathlib import Path
-from typing import Protocol, Sequence
+from typing import Awaitable, Callable, Protocol, Sequence
 
 from aiohttp import web
 from async_lru import alru_cache
@@ -28,6 +28,10 @@ from StreamDeck.Transport.Transport import TransportError
 from svgelements import SVG, Color, Matrix, Rect, Text
 
 from .icon import get_icon
+
+# Key animation settings.
+KEY_ANIMATION_PERIOD = 2.0
+KEY_ANIMATION_FPS = 10
 
 logger = logging.getLogger(__name__)
 
@@ -186,6 +190,9 @@ class DeckController:
     status_inhibited: float = field(init=False, default=0)
     tasks: set[asyncio.Task[None]] = field(init=False, factory=set)
 
+    # Key animations, keyed by key index.
+    animations: dict[int, asyncio.Task[None]] = field(init=False, factory=dict)
+
     def register_key(self, key: Key) -> None:
         """
         Register a key.
@@ -199,6 +206,44 @@ class DeckController:
         """
         key.controller = None
         del self.keys[key.key]
+
+    def start_key_animation(
+        self, key: int, render: Callable[[float], Awaitable[bytes]]
+    ) -> None:
+        """
+        Start a periodic animation for a key.
+
+        The render callback is called with the animation phase in radians
+        and should return the key image.
+        """
+        if key in self.animations and not self.animations[key].done():
+            return
+        self.animations[key] = asyncio.create_task(
+            self._animate_key(key, render)
+        )
+
+    def stop_key_animation(self, key: int) -> None:
+        """
+        Stop the animation for a key.
+        """
+        task = self.animations.pop(key, None)
+        if task is not None:
+            task.cancel()
+
+    async def _animate_key(
+        self, key: int, render: Callable[[float], Awaitable[bytes]]
+    ) -> None:
+        """
+        Run the animation loop for a key.
+        """
+        try:
+            while True:
+                phase = time.monotonic() * 2 * math.pi / KEY_ANIMATION_PERIOD
+                image = await render(phase)
+                self.deck.set_key_image(key, image)
+                await asyncio.sleep(1 / KEY_ANIMATION_FPS)
+        except asyncio.CancelledError:
+            pass
 
     async def on_key_change(
         self, deck: StreamDeck, key: int, key_state: bool
@@ -344,6 +389,10 @@ class DeckController:
             except Exception:  # pylint: disable=W0718
                 logger.error(f"Error stopping dial {dial}", exc_info=True)
 
+        for task in self.animations.values():
+            task.cancel()
+        self.animations.clear()
+
         if self.deck:
             self.deck.set_brightness(0)
             self.deck.reset()
@@ -361,8 +410,9 @@ class DeckController:
 
         if overrides and color_name in overrides:
             color_name = overrides[color_name]
-            if color_name.startswith("#"):
-                return color_name
+            if color_name in colors:
+                return colors[color_name]
+            return color_name
 
         return colors[color_name]
 

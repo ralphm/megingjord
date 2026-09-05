@@ -4,6 +4,7 @@ Tests for L{megingjord.ha}.
 
 import asyncio
 import logging
+import math
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -1951,6 +1952,9 @@ def make_alarm_tile(
     )
     tile.controller = AsyncMock()
     tile.controller.draw_tile.return_value = b"tile"
+    tile.controller.get_color = MagicMock(return_value="#990000")
+    tile.controller.start_key_animation = MagicMock()
+    tile.controller.stop_key_animation = MagicMock()
     tile.deck = MagicMock()
     return tile
 
@@ -2013,7 +2017,7 @@ class TestHAAlarmTile:
         await tile.set_tile()
         tile.controller.draw_tile.assert_awaited_once_with(
             "Home Alarm",
-            {"icon-primary": "icon-active"},
+            {"icon-primary": "icon-ok"},
             "shield-home",
             subtitle="Armed home",
             badge=None,
@@ -2060,6 +2064,91 @@ class TestHAAlarmTile:
             subtitle="Triggered",
             badge=None,
         )
+
+    @pytest.mark.asyncio
+    async def test_pulse_stops_on_armed(self) -> None:
+        """
+        Leaving a pulsing state stops the animation.
+        """
+        tile = make_alarm_tile(
+            {
+                "entity_id": "alarm_control_panel.home_alarm",
+                "state": "pending",
+                "attributes": {"friendly_name": "Home Alarm"},
+            }
+        )
+        await tile.set_tile()
+        tile.ha.get_state.return_value = {
+            "entity_id": "alarm_control_panel.home_alarm",
+            "state": "armed_home",
+            "attributes": {"friendly_name": "Home Alarm"},
+        }
+        await tile.set_tile()
+        tile.controller.stop_key_animation.assert_called_once_with(0)
+
+    @pytest.mark.asyncio
+    async def test_render_pulse(self) -> None:
+        """
+        The pulse renders with a modulated icon color.
+        """
+        tile = make_alarm_tile(
+            {
+                "entity_id": "alarm_control_panel.home_alarm",
+                "state": "pending",
+                "attributes": {"friendly_name": "Home Alarm"},
+            }
+        )
+        await tile.set_tile()
+        image = await tile._render_pulse(math.pi / 2)
+        assert image == b"tile"
+        colors = tile.controller.draw_tile.await_args.args[1]
+        assert colors == {"icon-primary": "rgba(153, 0, 0, 1.00)"}
+
+    @pytest.mark.asyncio
+    async def test_start_pulse_no_controller(self) -> None:
+        """
+        Starting the pulse without a controller does nothing.
+        """
+        tile = make_alarm_tile(
+            {
+                "entity_id": "alarm_control_panel.home_alarm",
+                "state": "pending",
+                "attributes": {},
+            }
+        )
+        tile.controller = None
+        tile._start_pulse()
+
+    @pytest.mark.asyncio
+    async def test_stop_pulse_no_controller(self) -> None:
+        """
+        Stopping the pulse without a controller does nothing.
+        """
+        tile = make_alarm_tile(
+            {
+                "entity_id": "alarm_control_panel.home_alarm",
+                "state": "pending",
+                "attributes": {},
+            }
+        )
+        tile.controller = None
+        tile._stop_pulse()
+
+    @pytest.mark.asyncio
+    async def test_stop_cancels_pulse(self) -> None:
+        """
+        Stopping the tile stops the animation.
+        """
+        tile = make_alarm_tile(
+            {
+                "entity_id": "alarm_control_panel.home_alarm",
+                "state": "triggered",
+                "attributes": {"friendly_name": "Home Alarm"},
+            }
+        )
+        await tile.set_tile()
+        await tile.stop()
+        tile.controller.stop_key_animation.assert_called_once_with(0)
 
     @pytest.mark.asyncio
     async def test_key_arms(self) -> None:
@@ -2228,6 +2317,51 @@ class TestHAAlarmTile:
         )
 
     @pytest.mark.asyncio
+    async def test_set_tile_unknown_state(self) -> None:
+        """
+        An unknown state shows the icon active.
+        """
+        tile = make_alarm_tile(
+            {
+                "entity_id": "alarm_control_panel.home_alarm",
+                "state": "unknown",
+                "attributes": {"friendly_name": "Home Alarm"},
+            }
+        )
+        await tile.set_tile()
+        tile.controller.draw_tile.assert_awaited_once_with(
+            "Home Alarm",
+            {"icon-primary": "icon-active"},
+            "shield",
+            subtitle="Unknown",
+            badge=None,
+        )
+
+    @pytest.mark.asyncio
+    async def test_set_tile_pending(self) -> None:
+        """
+        A pending alarm shows the alert icon and pulses.
+        """
+        tile = make_alarm_tile(
+            {
+                "entity_id": "alarm_control_panel.home_alarm",
+                "state": "pending",
+                "attributes": {"friendly_name": "Home Alarm"},
+            }
+        )
+        await tile.set_tile()
+        tile.controller.draw_tile.assert_awaited_once_with(
+            "Home Alarm",
+            {"icon-primary": "icon-alert"},
+            "shield-outline",
+            subtitle="Pending",
+            badge=None,
+        )
+        tile.controller.start_key_animation.assert_called_once_with(
+            0, tile._render_pulse
+        )
+
+    @pytest.mark.asyncio
     async def test_set_tile_custom_icon(self) -> None:
         """
         A custom icon is kept over the alarm state icon.
@@ -2245,7 +2379,7 @@ class TestHAAlarmTile:
         await tile.set_tile()
         tile.controller.draw_tile.assert_awaited_once_with(
             "Home Alarm",
-            {"icon-primary": "icon-active"},
+            {"icon-primary": "icon-ok"},
             "custom",
             subtitle="Armed away",
             badge=None,

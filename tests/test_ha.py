@@ -1952,7 +1952,7 @@ def make_alarm_tile(
     )
     tile.controller = AsyncMock()
     tile.controller.draw_tile.return_value = b"tile"
-    tile.controller.get_color = MagicMock(return_value="#990000")
+    tile.controller.get_color = MagicMock(return_value="#996633")
     tile.controller.start_key_animation = MagicMock()
     tile.controller.stop_key_animation = MagicMock()
     tile.deck = MagicMock()
@@ -2024,9 +2024,30 @@ class TestHAAlarmTile:
         )
 
     @pytest.mark.asyncio
-    async def test_set_tile_transitioning(self) -> None:
+    async def test_set_tile_disarming(self) -> None:
         """
-        A transitioning alarm shows the icon inactive.
+        A disarming alarm shows the icon inactive.
+        """
+        tile = make_alarm_tile(
+            {
+                "entity_id": "alarm_control_panel.home_alarm",
+                "state": "disarming",
+                "attributes": {"friendly_name": "Home Alarm"},
+            }
+        )
+        await tile.set_tile()
+        tile.controller.draw_tile.assert_awaited_once_with(
+            "Home Alarm",
+            {"icon-primary": "icon-inactive", "tile-bg": "tile-inactive-bg"},
+            "shield",
+            subtitle="Disarming",
+            badge=None,
+        )
+
+    @pytest.mark.asyncio
+    async def test_set_tile_arming(self) -> None:
+        """
+        An arming alarm shows the warning icon and pulses.
         """
         tile = make_alarm_tile(
             {
@@ -2038,10 +2059,13 @@ class TestHAAlarmTile:
         await tile.set_tile()
         tile.controller.draw_tile.assert_awaited_once_with(
             "Home Alarm",
-            {"icon-primary": "icon-inactive", "tile-bg": "tile-inactive-bg"},
+            {"icon-primary": "icon-warning"},
             "shield",
             subtitle="Arming",
             badge=None,
+        )
+        tile.controller.start_key_animation.assert_called_once_with(
+            0, tile._render_pulse
         )
 
     @pytest.mark.asyncio
@@ -2102,7 +2126,7 @@ class TestHAAlarmTile:
         image = await tile._render_pulse(math.pi / 2)
         assert image == b"tile"
         colors = tile.controller.draw_tile.await_args.args[1]
-        assert colors == {"icon-primary": "rgba(153, 0, 0, 1.00)"}
+        assert colors == {"icon-primary": "rgba(153, 102, 51, 1.00)"}
 
     @pytest.mark.asyncio
     async def test_start_pulse_no_controller(self) -> None:
@@ -2117,7 +2141,7 @@ class TestHAAlarmTile:
             }
         )
         tile.controller = None
-        tile._start_pulse()
+        tile._start_pulse("icon-warning")
 
     @pytest.mark.asyncio
     async def test_stop_pulse_no_controller(self) -> None:
@@ -2352,7 +2376,7 @@ class TestHAAlarmTile:
         await tile.set_tile()
         tile.controller.draw_tile.assert_awaited_once_with(
             "Home Alarm",
-            {"icon-primary": "icon-alert"},
+            {"icon-primary": "icon-warning"},
             "shield-outline",
             subtitle="Pending",
             badge=None,

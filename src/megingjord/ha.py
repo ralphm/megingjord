@@ -104,8 +104,15 @@ ALARM_ARMED = frozenset(
     }
 )
 
+# Colors for the pulsing states.
+ALARM_PULSE_COLORS = {
+    "pending": "icon-warning",
+    "arming": "icon-warning",
+    "triggered": "icon-alert",
+}
+
 # States that pulse the icon.
-ALARM_PULSING = frozenset({"pending", "triggered"})
+ALARM_PULSING = frozenset(ALARM_PULSE_COLORS)
 
 
 def normalize_url(url: str) -> str:
@@ -1112,7 +1119,7 @@ class HAAlarmTile(HAEntityTile):
                     "tile-bg": "tile-inactive-bg",
                 }
             elif value in ALARM_PULSING:
-                colors = {"icon-primary": "icon-alert"}
+                colors = {"icon-primary": ALARM_PULSE_COLORS[value]}
             elif value in ALARM_ARMED:
                 colors = {"icon-primary": "icon-ok"}
             elif value in ALARM_TRANSITIONING or value == "disarmed":
@@ -1133,7 +1140,7 @@ class HAAlarmTile(HAEntityTile):
         self.deck.set_key_image(self.key, tile)
 
         if state is not None and state["state"] in ALARM_PULSING:
-            self._start_pulse()
+            self._start_pulse(ALARM_PULSE_COLORS[state["state"]])
         else:
             self._stop_pulse()
 
@@ -1150,13 +1157,13 @@ class HAAlarmTile(HAEntityTile):
             badge=self._pulse_badge,
         )
 
-    def _start_pulse(self) -> None:
+    def _start_pulse(self, color_name: str) -> None:
         """
         Start the icon pulse animation.
         """
         if self.controller is None:
             return
-        hex_color = self.controller.get_color("icon-alert")
+        hex_color = self.controller.get_color(color_name)
         self._pulse_rgb = (
             int(hex_color[1:3], 16),
             int(hex_color[3:5], 16),

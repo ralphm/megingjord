@@ -30,8 +30,8 @@ from svgelements import SVG, Color, Matrix, Rect, Text
 from .icon import get_icon
 
 # Key animation settings.
-KEY_ANIMATION_PERIOD = 2.0
-KEY_ANIMATION_FPS = 10
+KEY_ANIMATION_PERIOD = 1.0
+KEY_ANIMATION_FPS = 20
 
 logger = logging.getLogger(__name__)
 

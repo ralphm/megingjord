@@ -2932,13 +2932,16 @@ class TestHAAlarmDial:
             {
                 "entity_id": "alarm_control_panel.home_alarm",
                 "state": "triggered",
-                "attributes": {"supported_features": 7},
+                "attributes": {
+                    "friendly_name": "Home Alarm",
+                    "supported_features": 7,
+                },
             }
         )
         await dial.update_view()
         await dial.render()
         dial.controller.renderer.draw_state_dial.assert_awaited_once_with(
-            "Triggered", "bell-ring", mini=False
+            "Home Alarm", "Triggered", "bell-ring", mini=False
         )
 
     @pytest.mark.asyncio
@@ -2950,13 +2953,32 @@ class TestHAAlarmDial:
             {
                 "entity_id": "alarm_control_panel.home_alarm",
                 "state": "arming",
-                "attributes": {"supported_features": 7},
+                "attributes": {
+                    "friendly_name": "Home Alarm",
+                    "supported_features": 7,
+                },
             }
         )
         await dial.update_view()
         await dial.render(mini=True)
         dial.controller.renderer.draw_state_dial.assert_awaited_once_with(
-            "Arming", "shield", mini=True
+            "Home Alarm", "Arming", "shield", mini=True
+        )
+
+    @pytest.mark.asyncio
+    async def test_render_transient_no_state(self) -> None:
+        """
+        A transient state without a state object falls back to the
+        entity id as title.
+        """
+        dial = make_alarm_dial(None)
+        dial.state = "pending"
+        await dial.render()
+        dial.controller.renderer.draw_state_dial.assert_awaited_once_with(
+            "alarm_control_panel.home_alarm",
+            "Pending",
+            "shield-outline",
+            mini=False,
         )
 
     @pytest.mark.asyncio

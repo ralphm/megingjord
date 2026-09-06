@@ -1438,12 +1438,19 @@ class HAAlarmDial:
             return Image.new("RGBA", (140, 100), "#00000000")
 
         if self.state in ALARM_TRANSIENT:
-            title = ALARM_TITLES.get(
+            state_name = ALARM_TITLES.get(
                 self.state, self.state.replace("_", " ").capitalize()
             )
             icon = ALARM_ICONS.get(self.state, "shield")
+            alarm_state = self.ha.get_state(self.entity_id)
+            if alarm_state is not None:
+                title = alarm_state.get("attributes", {}).get(
+                    "friendly_name", self.entity_id
+                )
+            else:
+                title = self.entity_id
             return await self.controller.renderer.draw_state_dial(
-                title, icon, mini=mini
+                title, state_name, icon, mini=mini
             )
 
         if self.current_view is None:

@@ -163,13 +163,13 @@ class Renderer:
                 secondary_icon,
                 get_color("icon-secondary"),
                 50,
-                (10, 20),
+                (60, 20),
             )
 
         if primary_icon:
             if secondary_icon:
                 size = 70
-                pos = (40, 35)
+                pos = (10, 35)
             else:
                 size = 80
                 pos = (20, 20)
@@ -204,55 +204,62 @@ class Renderer:
             return jpg.getvalue()
 
     async def draw_state_dial(
-        self, title: str, icon: str, mini: bool = False
+        self, title: str, state: str, icon: str, mini: bool = False
     ) -> Image.Image:
         """
         Draw a dial tile for a state, without a meter.
 
-        In mini mode, a smaller icon with the title to the right.
+        The layout matches the value dial: an icon, a title, and the
+        state name in the bar label position.
         """
         image = Image.new("RGBA", DIAL_TILE_SIZE, "#00000000")
 
         draw = ImageDraw.Draw(image)
 
+        margin_left = margin_right = 10
+        margin_top = margin_bottom = 2
+        icon_size = 40
+
+        await self._draw_icon_at(
+            image,
+            icon,
+            self.get_color("dial-icon"),
+            icon_size,
+            (margin_left, round(image.height / 2.0 + 5)),
+        )
+
+        if not mini:
+            lines = wrap_text(title, width=12, max_lines=2)
+            text = "\n".join(lines)
+            draw_text(
+                draw,
+                text,
+                (margin_left, margin_top),
+                18,
+                "la",
+                self.get_color("dial-title"),
+            )
+
+        meter_middle = image.height / 4.0 * 3.0
+        meter_left = margin_left + icon_size + margin_left
+        meter_right = image.width - margin_right - 1
+
         if mini:
-            icon_size = 40
-            await self._draw_icon_at(
-                image,
-                icon,
-                self.get_color("dial-icon"),
-                icon_size,
-                (10, round(image.height / 2.0 - icon_size / 2.0)),
-            )
-
-            text = textwrap.shorten(title, width=12, placeholder="…")
-            draw_text(
-                draw,
-                text,
-                (60, image.height / 2.0),
-                14,
-                "lm",
-                self.get_color("dial-title"),
-            )
+            label_x = meter_left
+            anchor = "ld"
         else:
-            icon_size = 64
-            await self._draw_icon_at(
-                image,
-                icon,
-                self.get_color("dial-icon"),
-                icon_size,
-                (round((image.width - icon_size) / 2.0), 8),
-            )
+            label_x = meter_right
+            anchor = "rd"
 
-            text = textwrap.shorten(title, width=14, placeholder="…")
-            draw_text(
-                draw,
-                text,
-                (image.width / 2.0, 78),
-                16,
-                "ma",
-                self.get_color("dial-title"),
-            )
+        text = textwrap.shorten(state, width=12, placeholder="…")
+        draw_text(
+            draw,
+            text,
+            (label_x, meter_middle - margin_bottom),
+            14,
+            anchor,
+            self.get_color("dial-bar-label"),
+        )
 
         return image
 

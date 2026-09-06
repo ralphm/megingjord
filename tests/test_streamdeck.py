@@ -192,7 +192,7 @@ class TestRenderBlocks:
         """
         renderer = make_renderer()
         state = await renderer.draw_state_dial(
-            "Pending", "shield-outline", mini=True
+            "Home Alarm", "Pending", "shield-outline", mini=True
         )
         assert state.size == (140, 100)
 
@@ -253,7 +253,9 @@ class TestRenderBlocks:
         The dial blocks render 140x100 LCD images.
         """
         renderer = make_renderer()
-        state = await renderer.draw_state_dial("Pending", "shield-outline")
+        state = await renderer.draw_state_dial(
+            "Home Alarm", "Pending", "shield-outline"
+        )
         assert state.size == (140, 100)
 
         item = MagicMock()

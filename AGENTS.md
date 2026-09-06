@@ -1,0 +1,352 @@
+# Megingjord
+
+## Goals
+
+Megingjord is a set of tools for controlling devices and applications using a Stream Deck, written in Python.
+
+It currently has support for:
+
+- Selecting audio output devices using PulseAudio
+- Toggling lights and other entities using Home Assistant
+- Button actions for Google Meet (using a browser plugin)
+- Clock on the Stream Deck + LCD
+- Brightness of the Stream Deck + LCD display
+
+## SOW System
+
+Project SOW status: initialized
+
+This project uses a local Statement of Work system.
+
+SOWs and specs are **local-only working memory, never committed**:
+
+- SOW working files live under `.agents/sow/{pending,current,active,done}/` and MUST NOT
+  be committed to any branch.
+- Specs live under `.agents/sow/specs/**` and are likewise local-only and
+  gitignored. They may be re-introduced to git later, reorganized, as a
+  deliberate decision; until then treat them as local memory.
+- Only the SOW framework files are committed and shared via git:
+  `.agents/sow/SOW.template.md`, `.agents/sow/audit.sh`.
+- `.gitignore` enforces this: `/.agents/sow/*/` (every subdirectory) is
+  ignored; the framework files are tracked normally.
+- Durable knowledge that must survive a SOW belongs in project skills, docs,
+  code, and tests (and, once reorganized, specs) — not in the SOW body.
+- Setup: after a fresh clone, create the local SOW directories with
+  `mkdir -p .agents/sow/{pending,current,active,done}` and
+  `mkdir -p .agents/sow/specs .local`. See "### SOW Locations And Naming".
+
+The SOW system is self-contained in this repository. Normal SOW work must not depend on `~/.agents`, `~/.AGENTS.md`, global skills, global templates, or global scripts. Use this `AGENTS.md`, the local SOW, project-local specs, and project-local skills.
+
+### Roles
+
+- **User responsibilities:** purpose, scope decisions, design forks, risk acceptance, destructive approvals, and final product judgment.
+- **Assistant responsibilities:** investigation, evidence, implementation, tests or equivalent validation, reviews, documentation, memory updates, and concise reporting.
+
+### Required First Checks
+
+Before creating a SOW or starting non-trivial implementation:
+
+1. Confirm the user has requested implementation.
+2. Inspect code/docs/data to establish whether a change is needed.
+3. Read the active SOWs under `.agents/sow/` if any exist. SOWs are local working memory; discover other in-flight work through open PRs and issues, not through `master`.
+4. Read relevant specs under `.agents/sow/specs/`.
+5. Inspect `.agents/skills/project-*/SKILL.md` and load every runtime project skill whose trigger matches the work.
+6. Ask the user only for irreducible product/design/risk decisions.
+
+### Sensitive Data In Durable Artifacts
+
+SOWs, specs, documentation, project skills, agent instructions, and code comments are commit-ready artifacts. Treat them as public unless a repository-specific policy explicitly says otherwise.
+
+CRITICAL: Never write raw sensitive data to durable artifacts. This includes passwords, API keys, bearer tokens, SNMP communities, private keys, connection strings with embedded credentials, session cookies, community member names, customer names, customer identifiers, personal data, non-private IP addresses that can identify customers, private endpoints, account IDs, and proprietary incident details.
+
+Write only sanitized evidence:
+
+- use placeholders such as `[REDACTED_SECRET]`, `[CUSTOMER]`, `[ACCOUNT]`, `[PRIVATE_ENDPOINT]`;
+- use stable aliases such as `customer-a` only when the real mapping is not stored in the repository;
+- cite file paths, line numbers, command names, schema fields, or error classes instead of copying sensitive values;
+- summarize logs and traces; include only minimal redacted snippets.
+
+If sensitive data is required to continue, stop and ask the user for a secure handling path. If sensitive data is found in a durable artifact, sanitize it before any commit. If sensitive data was already committed, tell the user and do not rewrite history without explicit approval.
+
+### Open-Source Reference Evidence
+
+When a SOW uses external open-source repositories as evidence, record the upstream repository identity and checked commit, not the workstation mirror path.
+
+For local mirrored or cloned open-source repositories, cite evidence in this form:
+
+```text
+owner/repo @ commit
+relative/path/inside/repo:line
+```
+
+Rules:
+
+- Never use workstation absolute paths for external open-source evidence in SOWs.
+- Resolve `owner/repo` from the repository remote, not only from the local directory name.
+- Record the commit with `git -C <repo> rev-parse --short=12 HEAD` or the full hash when precision matters.
+- Use paths relative to the upstream repository root after the `owner/repo @ commit` line.
+- If multiple repositories were checked, list each repository and commit separately.
+
+### Pre-Implementation Gate
+
+Implementation covered by a SOW must not begin until the SOW contains a concrete `## Pre-Implementation Gate` section. Before moving a SOW from `pending/open` to `current/in-progress`, or before continuing implementation in an existing current SOW that lacks this section, fill the gate.
+
+The gate must record:
+
+- Problem / root-cause model: what is happening, why it is happening, and what evidence supports that model.
+- Evidence reviewed: specs, code, docs, tests, logs, traces, prior SOWs, issues, or external references checked. Open-source references from local mirrors or clones must be cited as `owner/repo @ commit` plus repository-relative paths, never as workstation absolute paths.
+- Affected contracts and surfaces: APIs, schemas, files, commands, UI, docs, specs, skills, tests, integrations, operators, users.
+- Existing patterns to reuse: local modules, helpers, conventions, tests, and docs that should shape the implementation.
+- Risk and blast radius: regressions, compatibility, performance, security, data loss, migration, rollout, and operational risks.
+- Sensitive data handling plan: whether the work may expose secrets, credentials, bearer tokens, SNMP communities, community/customer data, personal data, non-private customer-identifying IPs, private endpoints, or proprietary incident details; how evidence will be redacted in SOWs, specs, docs, skills, instructions, and code comments.
+- Implementation plan: ordered chunks with scope, dependencies, and files or modules likely to change.
+- Validation plan: tests, fixtures, manual checks, real-use evidence, review passes, and same-failure searches.
+- Artifact impact plan: expected updates to `AGENTS.md`, runtime project skills, specs, end-user/operator docs, end-user/operator skills, and SOW lifecycle.
+- Open decisions: resolved decisions or numbered options for the user; unresolved decisions block implementation.
+
+Generic placeholders such as `TBD`, `N/A`, or "to be checked later" are invalid unless the SOW explains why the item truly does not apply. If the gate exposes an unknown that cannot be resolved by investigation, stop and ask the user before implementation.
+
+### When A SOW Is Required
+
+Create or reuse a SOW only after the user requests implementation and preliminary analysis confirms a non-trivial change is needed.
+
+Questions, discussions, reviews, status reports, and read-only investigation do not need a SOW. Trivial implementation such as typo or formatting-only fixes does not need one.
+
+When unsure whether a change is needed, investigate first. When an authorized change has unclear risk, treat it as non-trivial.
+
+### SOW Locations And Naming
+
+- SOW state directories (local-only): `.agents/sow/` with `pending/`,
+  `current/`, `active/`, `done/`. Move a SOW file between these as its state
+  changes; the whole tree is gitignored.
+- Specs (local-only): `.agents/sow/specs/`
+- Template for new SOWs (committed): `.agents/sow/SOW.template.md`
+- Local audit (committed): `.agents/sow/audit.sh`
+
+SOW working files and specs are never committed. `.gitignore` ignores
+`/.agents/sow/*/`; only the framework files above are tracked. The state
+directories are created locally (`mkdir -p
+.agents/sow/{pending,current,active,done}`), not by committed `.gitkeep`
+markers, so there is no committed SOW layout to preserve.
+
+Create new SOW files from `.agents/sow/SOW.template.md`. The template is project-local and may be customized for this repository.
+
+Filename:
+
+```text
+SOW-NNNN-YYYYMMDD-{slug}.md
+```
+
+Status and directory must agree:
+
+- `open` lives in `pending/`
+- `in-progress` lives in `current/`
+- `paused` lives in `current/`
+- `completed` lives in `done/`
+- `closed` lives in `done/`
+
+### Local SOW Parking
+
+Users may keep private paused, abandoned, or not-yet-public SOW drafts under
+`<repo-root>/.local/sow/`. This directory is gitignored and outside the project
+SOW lifecycle.
+
+Use `<repo-root>/.local/sow/` when the user wants to preserve work locally
+without creating a public or team-visible GitHub issue yet.
+
+Local parked SOWs are private memory only:
+
+- they are not durable project memory;
+- they are not visible to other contributors;
+- they are not acceptable as the only tracking for work that must coordinate a
+  team, block a merge, or survive across machines.
+
+Deferred work has two valid tracking paths:
+
+- public or team-visible follow-up: GitHub issue;
+- private or local follow-up: `<repo-root>/.local/sow/`.
+
+### SOW Completion
+
+The successful terminal SOW status is `completed`. `done` is a directory name, not a status value. Never write `Status: done` or `Status: complete`.
+
+When a SOW's work is ready to close:
+
+1. Finish implementation, docs, specs, skills, validation, and follow-up mapping.
+2. Update the SOW to `Status: completed`.
+3. Move the SOW file to `.agents/sow/done/`.
+
+SOW files are local-only working memory; the status change and the move are not
+committed. Do not create a separate commit just to mark or move the SOW.
+
+### One SOW At A Time
+
+Never execute multiple SOWs as one batch.
+
+If work overlaps:
+
+- merge or consolidate before implementation; or
+- split into separate SOWs and complete one before starting the next.
+
+Progress reports are not stop points. Once a SOW is in progress, continue until it is delivered, failed with evidence, blocked on a real user decision/approval, or superseded by newer user instructions.
+
+### User Decisions
+
+When user decisions are needed:
+
+1. Present concrete evidence with files/lines or source references.
+2. Provide numbered options.
+3. Explain pros, cons, implications, and risks.
+4. Recommend one option with reasoning.
+5. Record the user's decision in the SOW before implementation.
+
+Apply the global **minimal-complete** rule to every approved **surgical** or **long-term-best** recommendation.
+
+### Followup Discipline
+
+"Deferred" is not a terminal outcome.
+
+Before a SOW can close, every valid deferred item must be:
+
+- implemented in the current SOW; or
+- explicitly rejected as not worth doing, with evidence; or
+- represented by a real pending/current SOW file.
+
+Pre-close, search the SOW for:
+
+```text
+defer|later|follow-up|future|TODO|pending
+```
+
+Map every remaining item to implemented, rejected, or tracked.
+
+### Regressions
+
+A regression is discovered after a SOW was considered completed or closed, later testing or use finds broken behavior, and the original SOW's claimed outcome is no longer true.
+
+When behavior that a completed SOW claimed working stops working:
+
+1. Find the original SOW in `done/`.
+2. Move it back to `current/`.
+3. Mark it `in-progress` with a regression note in `## Status`.
+4. Append a new dated `## Regression - YYYY-MM-DD` section at the end of the file, after the original outcome, lessons, and follow-up content.
+5. In that appended section, record what broke, evidence, why previous validation missed it, the repair plan, validation, and updates needed to specs, skills, docs, audits, or follow-up SOWs.
+6. Fix and validate there.
+
+Never prepend regression content above the original SOW narrative. The original requirements, analysis, plan, validation, outcome, lessons, and follow-up must remain readable first.
+Do not create a new SOW for a true regression.
+
+### Validation Gate
+
+A SOW cannot be completed until Validation records:
+
+- acceptance criteria evidence;
+- tests or equivalent validation;
+- real-use evidence when a runnable path exists;
+- reviewer findings and how they were handled;
+- same-failure search results;
+- sensitive data gate: durable artifacts contain no raw secrets, credentials, bearer tokens, SNMP communities, community member names, customer names, personal data, non-private customer-identifying IPs, private endpoints, or proprietary incident details;
+- artifact maintenance gate for `AGENTS.md`, runtime project skills, specs, end-user/operator docs, end-user/operator skills, and SOW lifecycle;
+- SOW status/directory consistency;
+- spec update or specific reason no spec update was needed;
+- project skill update or specific reason no skill update was needed;
+- end-user/operator docs update or evidence-backed reason none were affected;
+- end-user/operator skill update or evidence-backed reason none were affected by docs/spec changes;
+- lessons extracted or specific reason there were none;
+- follow-up mapping.
+
+Generic "N/A" is invalid.
+
+### Artifact Maintenance Gate
+
+Every SOW close must explicitly record whether each durable artifact class was updated or why no update was needed:
+
+- `AGENTS.md` - workflow, responsibility, local framework, project-wide guardrails.
+- Runtime project skills - `.agents/skills/project-*/SKILL.md` for HOW to work here.
+- Specs - `.agents/sow/specs/` for WHAT the project does.
+- End-user/operator docs - README, docs site, runbooks, published guides, help text, or other human-facing documentation.
+- End-user/operator skills - output/reference skills copied or consumed outside normal repo work.
+- SOW lifecycle - split, merge, status, directory, deferred work, regression reopening, and follow-up mapping.
+
+This is an assistant responsibility. If a SOW changes behavior, docs, specs, commands, schemas, defaults, workflows, examples, or operating procedure, the assistant must update every affected artifact in the same SOW, or record the evidence-backed reason an artifact is unaffected.
+
+### Specs
+
+Specs are memory of WHAT this project does.
+
+Update specs when shipped work changes:
+
+- product behavior;
+- public contracts;
+- data formats;
+- UX rules;
+- business logic;
+- operational guarantees;
+- known edge cases.
+
+Specs describe current reality, not aspiration. If specs and code disagree, record the discrepancy in the active SOW and resolve or track it.
+
+### Project Skills
+
+Project skills are memory of HOW to work here.
+
+Runtime input project skills should live under `.agents/skills/project-*/SKILL.md`. The `project-` prefix is the generic hook meaning "agents working in this repo must consider this skill." Before non-trivial implementation, inspect those skill descriptions and load every matching runtime skill. Skill descriptions are mandatory hooks, not suggestions.
+
+Do not create generic `project-*` skills only to make the framework look complete. If this project intentionally grows project skills incrementally, record that in the active SOW and keep this section honest until concrete reusable knowledge exists.
+
+Output/reference skills may also use `project-*` when that name is part of the exported artifact semantics. Do not rename, shorten, or change their frontmatter descriptions only to satisfy runtime discovery. Instead, list them separately below and exclude them from default runtime guidance unless editing or validating those artifacts.
+
+Non-`project-*` skills under `.agents/skills/` are not automatically runtime instructions. If they are runtime input skills, rename them or add `project-*` wrappers. If the user explicitly defers conversion, preserve them under `Legacy runtime skills` below and track the unresolved alignment with a real SOW. If they are output/reference skills for end users, operators, or downstream assistants, list them separately below with their intended consumer.
+
+Output/reference skills are part of the documentation/specification surface, not just internal agent memory. When docs, specs, schemas, commands, defaults, examples, or public/operator-facing workflows change, update every affected output/reference skill in the same SOW, or record the evidence-backed reason none are affected.
+
+Skills must be updated during retrospection when:
+
+- the user corrects the assistant's workflow;
+- a reviewer finds a repeated mistake;
+- validation misses a failure mode;
+- a new command or workflow becomes canonical;
+- a new project hazard is discovered;
+- a new best or bad practice is learned;
+- an output/reference skill would otherwise become stale after a docs/spec/product change.
+
+### Project Skills Index
+
+Runtime input skills:
+
+- `.agents/skills/project-testing/`
+  Trigger: before running the check suite, claiming validation is complete, or live-testing on the Stream Deck.
+  Enforces: canonical test/check commands, coverage expectations, pre-commit hook behavior, and the live-testing workflow.
+- `.agents/skills/project-rendering/`
+  Trigger: before changing rendering output, the renderer block library, or alarm tile and dial visuals.
+  Enforces: the block library structure, the preview workflow for visual changes, and alarm state colors.
+
+Legacy runtime skills:
+
+- None.
+
+Output/reference skills:
+
+- None.
+
+### Project-specific commands
+
+- Tests: `env/bin/python -m pytest tests/`
+- Coverage: `env/bin/coverage run --source=src/megingjord -m pytest tests/ && env/bin/coverage combine && env/bin/coverage report -m`
+- Formatting: `env/bin/black src/megingjord/ tests/`
+- Import sorting: `env/bin/isort src/megingjord/ tests/`
+- Lint: `env/bin/flake8 src/megingjord/ tests/`
+- Type check: `env/bin/mypy src/megingjord/`
+- The pre-commit hook runs black, isort, flake8, trim trailing whitespace, fix end of files, check toml, and check yaml.
+
+### Project-specific overrides
+
+- Live testing of the Home Assistant integration uses a local script, excluded from git via `.git/info/exclude`, against the real Home Assistant endpoint.
+- Live testing of the BUSY Bar integration requires an API token from the BUSY Bar web UI.
+
+### Preservation Notes
+
+- No pre-existing `AGENTS.md` or other instruction files were present; this file was created from the SOW runtime template.
+- `TODO.md` (Google Meet bugs) was migrated into pending SOWs; the original is backed up at `.local/sow/TODO.md.backup`.
+
+Project SOW status: initialized

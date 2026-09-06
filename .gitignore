@@ -1,0 +1,11 @@
+# Per-user local working directory (audits, scratch, drafts, temp artifacts).
+# AI agents that follow AGENTS.md treat this as the place to write run-time data.
+/.local
+
+# Local-only SOW working memory: SOW documents and specs. Never committed. The
+# trailing-slash pattern ignores every subdirectory, keeping the framework
+# files (SOW.template.md, audit.sh) tracked.
+/.agents/sow/*/
+
+# Per-user secrets and pointers consumed by AI-skill scripts.
+/.env

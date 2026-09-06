@@ -2941,7 +2941,11 @@ class TestHAAlarmDial:
         await dial.update_view()
         await dial.render()
         dial.controller.renderer.draw_state_dial.assert_awaited_once_with(
-            "Home Alarm", "Triggered", "bell-ring", mini=False
+            "Home Alarm",
+            "Triggered",
+            "bell-ring",
+            mini=False,
+            colors={"dial-icon": "icon-alert"},
         )
 
     @pytest.mark.asyncio
@@ -2962,7 +2966,11 @@ class TestHAAlarmDial:
         await dial.update_view()
         await dial.render(mini=True)
         dial.controller.renderer.draw_state_dial.assert_awaited_once_with(
-            "Home Alarm", "Arming", "shield", mini=True
+            "Home Alarm",
+            "Arming",
+            "shield",
+            mini=True,
+            colors={"dial-icon": "icon-warning"},
         )
 
     @pytest.mark.asyncio
@@ -2979,6 +2987,7 @@ class TestHAAlarmDial:
             "Pending",
             "shield-outline",
             mini=False,
+            colors={"dial-icon": "icon-warning"},
         )
 
     @pytest.mark.asyncio

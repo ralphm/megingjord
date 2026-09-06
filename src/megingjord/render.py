@@ -204,7 +204,12 @@ class Renderer:
             return jpg.getvalue()
 
     async def draw_state_dial(
-        self, title: str, state: str, icon: str, mini: bool = False
+        self,
+        title: str,
+        state: str,
+        icon: str,
+        mini: bool = False,
+        colors: dict[str, str] | None = None,
     ) -> Image.Image:
         """
         Draw a dial tile for a state, without a meter.
@@ -212,7 +217,9 @@ class Renderer:
         The layout matches the value dial: an icon, a title, and the
         state name in the bar label position.
         """
-        return await self._draw_dial(title, icon, state, mini, anchor="ld")
+        return await self._draw_dial(
+            title, icon, state, mini, anchor="ld", colors=colors
+        )
 
     async def draw_selection_dial(
         self, view: Any, mini: bool = False
@@ -232,7 +239,8 @@ class Renderer:
         if view.selected > 0:
             item = view.items[view.selected - 1]
             color = self.get_color(
-                "icon-active" if item.current else "icon-inactive"
+                item.color
+                or ("icon-active" if item.current else "icon-inactive")
             )
             await self._draw_icon_at(
                 image,
@@ -252,7 +260,8 @@ class Renderer:
         if view.selected < len(view.items) - 1:
             item = view.items[view.selected + 1]
             color = self.get_color(
-                "icon-active" if item.current else "icon-inactive"
+                item.color
+                or ("icon-active" if item.current else "icon-inactive")
             )
             await self._draw_icon_at(
                 image,
@@ -270,7 +279,9 @@ class Renderer:
             )
 
         item = view.items[view.selected]
-        color = self.get_color("icon-active" if item.current else "dial-icon")
+        color = self.get_color(
+            item.color or ("icon-active" if item.current else "dial-icon")
+        )
         await self._draw_icon_at(
             image,
             item.icon,
@@ -316,6 +327,7 @@ class Renderer:
         mini: bool,
         anchor: str = "ld",
         value: float | None = None,
+        colors: dict[str, str] | None = None,
     ) -> Image.Image:
         """
         Draw a dial tile: an icon, a title, a bar label, and an
@@ -332,7 +344,7 @@ class Renderer:
         await self._draw_icon_at(
             image,
             icon,
-            self.get_color("dial-icon"),
+            self.get_color("dial-icon", overrides=colors),
             icon_size,
             (margin_left, round(image.height / 2.0 + 5)),
         )

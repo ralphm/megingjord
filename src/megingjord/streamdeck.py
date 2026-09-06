@@ -137,6 +137,12 @@ class ScrollerItem(Protocol):
         Indicator for this item being current.
         """
 
+    @property
+    def color(self) -> str | None:
+        """
+        Optional color override for the icon of the current item.
+        """
+
 
 @define
 class ScrollerView:

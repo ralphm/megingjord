@@ -1295,6 +1295,7 @@ class AlarmModeScrollerItem(ScrollerItem):
 
     wrapped: str
     current: bool = False
+    color: str | None = None
 
     @property
     def title(self) -> str:
@@ -1381,8 +1382,14 @@ class HAAlarmDial:
                 supported_features & ALARM_FEATURES[mode]
             ):
                 continue
-            items.append(AlarmModeScrollerItem(mode, current=mode == value))
-            if mode == value:
+            current = mode == value
+            color = "icon-ok" if mode in ALARM_ARMED else "icon-active"
+            items.append(
+                AlarmModeScrollerItem(
+                    mode, current=current, color=color if current else None
+                )
+            )
+            if current:
                 selected = len(items) - 1
         if value not in {item.wrapped for item in items}:
             selected = min(previous, len(items) - 1)
@@ -1442,6 +1449,11 @@ class HAAlarmDial:
                 self.state, self.state.replace("_", " ").capitalize()
             )
             icon = ALARM_ICONS.get(self.state, "shield")
+            colors = {
+                "dial-icon": ALARM_PULSE_COLORS.get(
+                    self.state, "icon-inactive"
+                )
+            }
             alarm_state = self.ha.get_state(self.entity_id)
             if alarm_state is not None:
                 title = alarm_state.get("attributes", {}).get(
@@ -1450,7 +1462,7 @@ class HAAlarmDial:
             else:
                 title = self.entity_id
             return await self.controller.renderer.draw_state_dial(
-                title, state_name, icon, mini=mini
+                title, state_name, icon, mini=mini, colors=colors
             )
 
         if self.current_view is None:

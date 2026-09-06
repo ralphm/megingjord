@@ -205,14 +205,17 @@ class TestRenderBlocks:
         prev_item = MagicMock()
         prev_item.icon = "shield"
         prev_item.current = False
+        prev_item.color = None
         item = MagicMock()
         item.icon = "shield-moon"
         item.title = "Armed home"
         item.subtitle = "Target"
         item.current = True
+        item.color = None
         next_item = MagicMock()
         next_item.icon = "shield-off"
         next_item.current = False
+        next_item.color = None
         view = MagicMock()
         view.items = [prev_item, item, next_item]
         view.selected = 1
@@ -230,6 +233,7 @@ class TestRenderBlocks:
         item.title = "Disarmed"
         item.subtitle = None
         item.current = True
+        item.color = None
         view = MagicMock()
         view.items = [item]
         view.selected = 0
@@ -263,6 +267,7 @@ class TestRenderBlocks:
         item.title = "Disarmed"
         item.subtitle = None
         item.current = True
+        item.color = None
         view = MagicMock()
         view.items = [item]
         view.selected = 0

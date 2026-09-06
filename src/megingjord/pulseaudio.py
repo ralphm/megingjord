@@ -181,6 +181,7 @@ class PulseOutputScrollerItem(ScrollerItem):
     """
 
     wrapped: PulseOutput
+    color: str | None = None
 
     @property
     def title(self) -> str:
@@ -297,6 +298,7 @@ class PulseInputScrollerItem(ScrollerItem):
     """
 
     wrapped: PulseInput
+    color: str | None = None
 
     @property
     def title(self) -> str:

@@ -55,7 +55,5 @@ async def get_icon(icon: str, size: int) -> SVG:
     if not icon_filename.exists():
         logger.debug(f"Need to download {icon}")
         await download_icon(icon, icon_filename)
-    else:
-        logger.debug(f"Using cached icon {icon}")
 
     return SVG.parse(icon_filename, reify=False, width=size, height=size)

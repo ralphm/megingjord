@@ -2123,7 +2123,7 @@ class TestHAAlarmTile:
             }
         )
         await tile.set_tile()
-        image = await tile._render_pulse(math.pi / 2)
+        image = await tile._render_pulse(math.pi)
         assert image == b"tile"
         colors = tile.controller.draw_tile.await_args.args[1]
         assert colors == {"icon-primary": "rgba(153, 102, 51, 1.00)"}
@@ -2157,6 +2157,22 @@ class TestHAAlarmTile:
         )
         tile.controller = None
         tile._stop_pulse()
+
+    def test_pulse_alpha(self) -> None:
+        """
+        The pulse alpha eases in and out between 0.25 and 1.0.
+        """
+        tile = make_alarm_tile(
+            {
+                "entity_id": "alarm_control_panel.home_alarm",
+                "state": "pending",
+                "attributes": {},
+            }
+        )
+        assert tile._pulse_alpha(0) == 0.25
+        assert tile._pulse_alpha(math.pi) == 1.0
+        assert tile._pulse_alpha(2 * math.pi) == 0.25
+        assert tile._pulse_alpha(math.pi / 2) == 0.625
 
     @pytest.mark.asyncio
     async def test_stop_cancels_pulse(self) -> None:

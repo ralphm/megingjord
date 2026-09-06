@@ -1182,10 +1182,25 @@ class HAAlarmTile(HAEntityTile):
         """
         Render the tile with a pulsing icon.
         """
-        alpha = 0.25 + 0.75 * (0.5 + 0.5 * math.sin(phase))
         r, g, b = self._pulse_rgb
-        colors = {"icon-primary": f"rgba({r}, {g}, {b}, {alpha:.2f})"}
+        colors = {
+            "icon-primary": (
+                f"rgba({r}, {g}, {b}, {self._pulse_alpha(phase):.2f})"
+            )
+        }
         return await self._draw(colors)
+
+    def _pulse_alpha(self, phase: float) -> float:
+        """
+        The icon alpha for the given pulse phase, with ease-in-out.
+        """
+        t = (phase % (2 * math.pi)) / (2 * math.pi)
+        if t < 0.5:
+            x = t * 2
+        else:
+            x = (1 - t) * 2
+        eased = x * x * (3 - 2 * x)
+        return 0.25 + 0.75 * eased
 
     async def stop(self) -> None:
         """

@@ -170,7 +170,92 @@ class TestHAWebSocketClient:
         unsubscribe = client.subscribe("light.test", callback)
         assert callback in client.subscribers["light.test"]
         unsubscribe()
-        assert callback not in client.subscribers["light.test"]
+        assert "light.test" not in client.subscribers
+
+    def test_subscribe_keeps_other_callbacks(
+        self, ha_client: tuple[HAWebSocketClient, MagicMock]
+    ) -> None:
+        """
+        Unsubscribing one callback keeps the others.
+        """
+
+        async def callback1(state: dict | None) -> None:
+            pass
+
+        async def callback2(state: dict | None) -> None:
+            pass
+
+        client, _ = ha_client
+        unsubscribe1 = client.subscribe("light.test", callback1)
+        client.subscribe("light.test", callback2)
+        unsubscribe1()
+        assert callback2 in client.subscribers["light.test"]
+
+    @pytest.mark.asyncio
+    async def test_subscribe_dedup(
+        self, ha_client: tuple[HAWebSocketClient, MagicMock]
+    ) -> None:
+        """
+        Subscribing twice to the same entity sends one command.
+        """
+
+        async def callback(state: dict | None) -> None:
+            pass
+
+        client, mock_class = ha_client
+        mock = mock_class.return_value
+        mock.subscribe_entities = AsyncMock()
+        client._connected = True
+        client.subscribe("light.test", callback)
+        client.subscribe("light.test", callback)
+        await asyncio.sleep(0.05)
+        mock.subscribe_entities.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_subscribe_after_unsubscribe(
+        self, ha_client: tuple[HAWebSocketClient, MagicMock]
+    ) -> None:
+        """
+        Re-subscribing after unsubscribing all sends no new command.
+        """
+
+        async def callback(state: dict | None) -> None:
+            pass
+
+        client, mock_class = ha_client
+        mock = mock_class.return_value
+        mock.subscribe_entities = AsyncMock()
+        client._connected = True
+        unsubscribe = client.subscribe("light.test", callback)
+        await asyncio.sleep(0.05)
+        unsubscribe()
+        client.subscribe("light.test", callback)
+        await asyncio.sleep(0.05)
+        mock.subscribe_entities.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_subscribe_existing_state(
+        self, ha_client: tuple[HAWebSocketClient, MagicMock]
+    ) -> None:
+        """
+        Subscribing to an entity with state does not mark it missing.
+        """
+        client, mock_class = ha_client
+        mock = mock_class.return_value
+        mock.subscribe_entities = AsyncMock()
+        client.states["light.test"] = {
+            "entity_id": "light.test",
+            "state": "on",
+            "attributes": {},
+        }
+
+        async def callback(state: dict | None) -> None:
+            pass
+
+        client._connected = True
+        client.subscribe("light.test", callback)
+        await asyncio.sleep(0.05)
+        assert not client.is_missing("light.test")
 
     @pytest.mark.asyncio
     async def test_subscribe_missing(
@@ -2591,31 +2676,18 @@ class TestHAAlarmDial:
     @pytest.mark.asyncio
     async def test_update_view_transient(self) -> None:
         """
-        A transient state is not an item; the selection is kept.
+        A transient state shows no scroller.
         """
         dial = make_alarm_dial(
             {
                 "entity_id": "alarm_control_panel.home_alarm",
-                "state": "disarmed",
+                "state": "arming",
                 "attributes": {"supported_features": 7},
             }
         )
         await dial.update_view()
-        dial.current_view.selected = 1
-        dial.ha.get_state.return_value = {
-            "entity_id": "alarm_control_panel.home_alarm",
-            "state": "arming",
-            "attributes": {"supported_features": 7},
-        }
-        await dial.update_view()
-        assert [item.wrapped for item in dial.current_view.items] == [
-            "disarmed",
-            "armed_home",
-            "armed_away",
-            "armed_night",
-        ]
-        assert dial.current_view.selected == 1
-        assert not any(item.current for item in dial.current_view.items)
+        assert dial.current_view is None
+        assert dial.state == "arming"
 
     @pytest.mark.asyncio
     async def test_on_dial_turn(self) -> None:
@@ -2825,6 +2897,92 @@ class TestHAAlarmDial:
         dial.controller = None
         image = await dial.render()
         assert image.size == (140, 100)
+
+    @pytest.mark.asyncio
+    async def test_render_transient(self) -> None:
+        """
+        A transient state renders a static state tile.
+        """
+        dial = make_alarm_dial(
+            {
+                "entity_id": "alarm_control_panel.home_alarm",
+                "state": "triggered",
+                "attributes": {"supported_features": 7},
+            }
+        )
+        await dial.update_view()
+        await dial.render()
+        dial.controller.draw_dial_tile_state.assert_awaited_once_with(
+            "Triggered", "bell-ring", mini=False
+        )
+
+    @pytest.mark.asyncio
+    async def test_render_transient_mini(self) -> None:
+        """
+        A transient state renders the mini state tile.
+        """
+        dial = make_alarm_dial(
+            {
+                "entity_id": "alarm_control_panel.home_alarm",
+                "state": "arming",
+                "attributes": {"supported_features": 7},
+            }
+        )
+        await dial.update_view()
+        await dial.render(mini=True)
+        dial.controller.draw_dial_tile_state.assert_awaited_once_with(
+            "Arming", "shield", mini=True
+        )
+
+    @pytest.mark.asyncio
+    async def test_on_dial_push_no_view(self) -> None:
+        """
+        Pushing before the first view update does nothing.
+        """
+        dial = make_alarm_dial(
+            {
+                "entity_id": "alarm_control_panel.home_alarm",
+                "state": "disarmed",
+                "attributes": {"supported_features": 7},
+            }
+        )
+        await dial.on_dial_push(True)
+        dial.ha.call_service.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_render_no_view(self) -> None:
+        """
+        Rendering before the first view update returns a blank image.
+        """
+        dial = make_alarm_dial(
+            {
+                "entity_id": "alarm_control_panel.home_alarm",
+                "state": "disarmed",
+                "attributes": {"supported_features": 7},
+            }
+        )
+        image = await dial.render()
+        assert image.size == (140, 100)
+
+    @pytest.mark.asyncio
+    async def test_on_dial_push_transient_disarms(self) -> None:
+        """
+        Pushing the dial in a transient state disarms.
+        """
+        dial = make_alarm_dial(
+            {
+                "entity_id": "alarm_control_panel.home_alarm",
+                "state": "arming",
+                "attributes": {"supported_features": 7},
+            }
+        )
+        await dial.update_view()
+        await dial.on_dial_push(True)
+        dial.ha.call_service.assert_awaited_once_with(
+            "alarm_control_panel",
+            "alarm_disarm",
+            entity_id="alarm_control_panel.home_alarm",
+        )
 
     @pytest.mark.asyncio
     async def test_start(self) -> None:

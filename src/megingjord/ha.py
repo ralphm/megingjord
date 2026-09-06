@@ -114,6 +114,9 @@ ALARM_PULSE_COLORS = {
 # States that pulse the icon.
 ALARM_PULSING = frozenset(ALARM_PULSE_COLORS)
 
+# States shown as a static dial tile instead of the scroller.
+ALARM_TRANSIENT = ALARM_TRANSITIONING | frozenset({"triggered"})
+
 
 def normalize_url(url: str) -> str:
     """
@@ -264,6 +267,7 @@ class HAWebSocketClient:
     subscribers: dict[
         str, set[Callable[[dict[str, Any] | None], Coroutine[Any, Any, None]]]
     ] = field(init=False, factory=dict)
+    subscribed: set[str] = field(init=False, factory=set)
     tasks: set[asyncio.Task[None]] = field(init=False, factory=set)
     task: asyncio.Task[None] | None = field(init=False, default=None)
     _connected: bool = field(init=False, default=False)
@@ -326,6 +330,7 @@ class HAWebSocketClient:
                 await self.client.subscribe_entities(
                     self._on_entity_event, [entity_id]
                 )
+                self.subscribed.add(entity_id)
             await listener
         finally:
             if not listener.done():
@@ -335,6 +340,7 @@ class HAWebSocketClient:
             self._connected = False
             self.states = {}
             self.missing.clear()
+            self.subscribed.clear()
             self.registry_entries.clear()
             self.platform_icons.clear()
             self.component_icons.clear()
@@ -512,11 +518,14 @@ class HAWebSocketClient:
         subscribers = self.subscribers.setdefault(entity_id, set())
         subscribers.add(callback)
 
-        if self._connected:
+        if self._connected and entity_id not in self.subscribed:
+            self.subscribed.add(entity_id)
             self._subscribe_entity(entity_id)
 
         def unsubscribe() -> None:
             subscribers.discard(callback)
+            if not subscribers:
+                self.subscribers.pop(entity_id, None)
 
         return unsubscribe
 
@@ -1251,6 +1260,7 @@ class HAAlarmDial:
     deck: StreamDeck = field(init=False)
     unsubscribes: list[Callable[[], None]] = field(init=False, factory=list)
     current_view: ScrollerView | None = field(init=False, default=None)
+    state: str | None = field(init=False, default=None)
 
     async def start(self, deck: StreamDeck) -> None:
         """
@@ -1291,6 +1301,11 @@ class HAAlarmDial:
         else:
             supported_features = 0
             value = None
+        self.state = value
+
+        if value in ALARM_TRANSIENT:
+            self.current_view = None
+            return
 
         previous = self.current_view.selected if self.current_view else 0
 
@@ -1331,19 +1346,24 @@ class HAAlarmDial:
         """
         Called when the dial got pressed or released.
         """
-        if not dial_state or not self.controller or not self.current_view:
+        if not dial_state or not self.controller:
             return
 
-        mode = self.current_view.selected_item.wrapped
-        assert isinstance(mode, str)
-        service = ALARM_SERVICES[mode]
-        state = self.ha.get_state(self.entity_id)
-        code_arm_required = bool(
-            state and state.get("attributes", {}).get("code_arm_required")
-        )
-        if mode != "disarmed" and code_arm_required:
-            logger.warning("Arming %s requires a code", self.entity_id)
-            return
+        if self.state in ALARM_TRANSIENT:
+            service = "alarm_disarm"
+        else:
+            if self.current_view is None:
+                return
+            mode = self.current_view.selected_item.wrapped
+            assert isinstance(mode, str)
+            service = ALARM_SERVICES[mode]
+            state = self.ha.get_state(self.entity_id)
+            code_arm_required = bool(
+                state and state.get("attributes", {}).get("code_arm_required")
+            )
+            if mode != "disarmed" and code_arm_required:
+                logger.warning("Arming %s requires a code", self.entity_id)
+                return
 
         try:
             await self.ha.call_service(
@@ -1358,7 +1378,19 @@ class HAAlarmDial:
         """
         Render the portion of the LCD display (tile) for this dial.
         """
-        if not self.deck or not self.controller or not self.current_view:
+        if not self.deck or not self.controller:
+            return Image.new("RGBA", (140, 100), "#00000000")
+
+        if self.state in ALARM_TRANSIENT:
+            title = ALARM_TITLES.get(
+                self.state, self.state.replace("_", " ").capitalize()
+            )
+            icon = ALARM_ICONS.get(self.state, "shield")
+            return await self.controller.draw_dial_tile_state(
+                title, icon, mini=mini
+            )
+
+        if self.current_view is None:
             return Image.new("RGBA", (140, 100), "#00000000")
 
         return await self.controller.draw_dial_tile_scroller(

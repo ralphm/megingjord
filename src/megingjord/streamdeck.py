@@ -32,7 +32,7 @@ from .icon import get_icon
 
 # Key animation settings.
 KEY_ANIMATION_PERIOD = 1.0
-KEY_ANIMATION_FPS = 20
+KEY_ANIMATION_FPS = 25
 
 logger = logging.getLogger(__name__)
 
@@ -606,6 +606,59 @@ class DeckController:
                 ),
                 radius=3,
                 fill=self.get_color("dial-bar-fill"),
+            )
+
+        return image
+
+    async def draw_dial_tile_state(
+        self, title: str, icon: str, mini: bool = False
+    ) -> Image.Image:
+        """
+        Draw a dial tile for a state, without a meter.
+
+        In mini mode, a smaller icon with the title to the right.
+        """
+        image = Image.new("RGBA", (140, 100), "#00000000")
+
+        draw = ImageDraw.Draw(image)
+
+        if mini:
+            icon_size = 40
+            icon_image = await self.draw_icon(
+                icon, self.get_color("dial-icon"), icon_size
+            )
+            image.alpha_composite(
+                icon_image,
+                (10, round(image.height / 2.0 - icon_size / 2.0)),
+            )
+
+            font = ImageFont.truetype(UBUNTU_FONT, 14)
+            text = textwrap.shorten(title, width=12, placeholder="…")
+            draw.text(
+                (60, image.height / 2.0),
+                text=text,
+                font=font,
+                anchor="lm",
+                fill=self.get_color("dial-title"),
+            )
+        else:
+            icon_size = 64
+            icon_image = await self.draw_icon(
+                icon, self.get_color("dial-icon"), icon_size
+            )
+            image.alpha_composite(
+                icon_image,
+                (round((image.width - icon_size) / 2.0), 8),
+            )
+
+            font = ImageFont.truetype(UBUNTU_FONT, 16)
+            text = textwrap.shorten(title, width=14, placeholder="…")
+            draw.text(
+                (image.width / 2.0, 78),
+                text=text,
+                font=font,
+                anchor="ma",
+                fill=self.get_color("dial-title"),
             )
 
         return image

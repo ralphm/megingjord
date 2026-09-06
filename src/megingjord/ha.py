@@ -68,6 +68,9 @@ ALARM_SERVICES = {
     "armed_custom_bypass": "alarm_arm_custom_bypass",
 }
 
+# Reverse mapping from service to the state it arms.
+ALARM_SERVICE_STATES = {v: k for k, v in ALARM_SERVICES.items()}
+
 ALARM_ICONS = {
     "disarmed": "shield-off",
     "armed_home": "shield-home",
@@ -870,7 +873,7 @@ class HAEntityTile:
 
         logger.debug(f"Setting key {self.key} to icon {icon}: {text!r}")
 
-        tile = await self.controller.draw_tile(
+        tile = await self.controller.renderer.draw_state_tile(
             text, colors, icon, subtitle=subtitle, badge=badge
         )
         self.deck.set_key_image(self.key, tile)
@@ -952,7 +955,7 @@ class HAEntityDial:
             )
             value = self.value
 
-        return await self.controller.draw_dial_tile(
+        return await self.controller.renderer.draw_value_dial(
             title=title, icon=icon, value=value, mini=mini
         )
 
@@ -1087,6 +1090,7 @@ class HAAlarmTile(HAEntityTile):
     _pulse_icon: str = field(init=False, default="")
     _pulse_subtitle: str | None = field(init=False, default=None)
     _pulse_badge: str | None = field(init=False, default=None)
+    _pulse_secondary: str | None = field(init=False, default=None)
     _pulse_rgb: tuple[int, int, int] = field(init=False, default=(0, 0, 0))
     _pulse_frames: dict[float, bytes] = field(init=False, factory=dict)
 
@@ -1120,6 +1124,9 @@ class HAAlarmTile(HAEntityTile):
     async def set_tile(self) -> None:
         """
         Draw the tile based on the alarm state.
+
+        Stable states show a transition tile with the target state;
+        transient and unavailable states show a state tile.
         """
         if not self.controller or not self.deck:
             return
@@ -1135,6 +1142,7 @@ class HAAlarmTile(HAEntityTile):
                 "icon-primary": "icon-inactive",
                 "tile-bg": "tile-inactive-bg",
             }
+            secondary = None
         else:
             attributes = state.get("attributes", {})
             text = attributes.get("friendly_name", self.entity_id)
@@ -1152,17 +1160,31 @@ class HAAlarmTile(HAEntityTile):
                     "icon-primary": "icon-inactive",
                     "tile-bg": "tile-inactive-bg",
                 }
+                secondary = None
             elif value in ALARM_PULSING:
                 colors = {"icon-primary": ALARM_PULSE_COLORS[value]}
-            elif value in ALARM_ARMED:
-                colors = {"icon-primary": "icon-ok"}
-            elif value in ALARM_TRANSITIONING or value == "disarmed":
+                secondary = None
+            elif value in ALARM_TRANSITIONING:
                 colors = {
                     "icon-primary": "icon-inactive",
                     "tile-bg": "tile-inactive-bg",
                 }
+                secondary = None
+            elif value in ALARM_ARMED:
+                colors = {"icon-primary": "icon-ok"}
+                secondary = "shield-off"
+            elif value == "disarmed":
+                colors = {
+                    "icon-primary": "icon-inactive",
+                    "tile-bg": "tile-inactive-bg",
+                }
+                target_state = ALARM_SERVICE_STATES.get(
+                    self.arm_service, "armed_away"
+                )
+                secondary = ALARM_ICONS.get(target_state, "shield")
             else:
                 colors = {"icon-primary": "icon-active"}
+                secondary = "shield-off"
 
         logger.debug(f"Setting key {self.key} to icon {icon}: {text!r}")
 
@@ -1170,7 +1192,12 @@ class HAAlarmTile(HAEntityTile):
         self._pulse_icon = icon
         self._pulse_subtitle = subtitle
         self._pulse_badge = badge
-        tile = await self._draw(colors)
+        self._pulse_secondary = secondary
+
+        if secondary is None:
+            tile = await self._draw_state(colors)
+        else:
+            tile = await self._draw_transition(colors)
         self.deck.set_key_image(self.key, tile)
 
         if state is not None and state["state"] in ALARM_PULSING:
@@ -1178,15 +1205,29 @@ class HAAlarmTile(HAEntityTile):
         else:
             self._stop_pulse()
 
-    async def _draw(self, colors: dict[str, str]) -> bytes:
+    async def _draw_state(self, colors: dict[str, str]) -> bytes:
         """
         Draw the tile with the stored text and icon.
         """
         assert self.controller is not None
-        return await self.controller.draw_tile(
+        return await self.controller.renderer.draw_state_tile(
             self._pulse_text,
             colors,
             self._pulse_icon,
+            subtitle=self._pulse_subtitle,
+            badge=self._pulse_badge,
+        )
+
+    async def _draw_transition(self, colors: dict[str, str]) -> bytes:
+        """
+        Draw the tile with the stored text, icon and target icon.
+        """
+        assert self.controller is not None
+        return await self.controller.renderer.draw_transition_tile(
+            self._pulse_text,
+            colors,
+            self._pulse_icon,
+            self._pulse_secondary,
             subtitle=self._pulse_subtitle,
             badge=self._pulse_badge,
         )
@@ -1197,7 +1238,7 @@ class HAAlarmTile(HAEntityTile):
         """
         if self.controller is None:
             return
-        hex_color = self.controller.get_color(color_name)
+        hex_color = self.controller.renderer.get_color(color_name)
         self._pulse_rgb = (
             int(hex_color[1:3], 16),
             int(hex_color[3:5], 16),
@@ -1222,7 +1263,7 @@ class HAAlarmTile(HAEntityTile):
         if frame is None:
             r, g, b = self._pulse_rgb
             colors = {"icon-primary": f"rgba({r}, {g}, {b}, {alpha:.2f})"}
-            frame = await self._draw(colors)
+            frame = await self._draw_state(colors)
             self._pulse_frames[alpha] = frame
         return frame
 
@@ -1401,13 +1442,13 @@ class HAAlarmDial:
                 self.state, self.state.replace("_", " ").capitalize()
             )
             icon = ALARM_ICONS.get(self.state, "shield")
-            return await self.controller.draw_dial_tile_state(
+            return await self.controller.renderer.draw_state_dial(
                 title, icon, mini=mini
             )
 
         if self.current_view is None:
             return Image.new("RGBA", (140, 100), "#00000000")
 
-        return await self.controller.draw_dial_tile_scroller(
+        return await self.controller.renderer.draw_selection_dial(
             self.current_view, mini=mini
         )

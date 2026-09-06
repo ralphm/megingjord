@@ -147,6 +147,7 @@ COLOR_THEMES = {
         "icon-secondary": "blue",
         "icon-alert": "red",
         "icon-ok": "green",
+        "icon-warning": "orange",
         "icon-inactive": "blue",
         "icon-active": "light-blue",
         "lcd-bg": "black",

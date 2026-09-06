@@ -755,7 +755,7 @@ class PulseDefaultSinkKey:
             primary_icon = "help-rhombus-outline"
             secondary_icon = None
 
-        tile = await self.controller.draw_tile(
+        tile = await self.controller.renderer.draw_transition_tile(
             title=title,
             primary_icon=primary_icon,
             secondary_icon=secondary_icon,
@@ -875,7 +875,7 @@ class PulseDefaultSinkDial:
         if not self.pulse.pulse or not self.controller or view is None:
             return Image.new("RGBA", (140, 100), "#00000000")
 
-        image = await self.controller.draw_dial_tile_scroller(
+        image = await self.controller.renderer.draw_selection_dial(
             view=view,
             mini=mini,
         )
@@ -962,7 +962,7 @@ class PulseDefaultSourceKey:
             primary_icon = "help-rhombus-outline"
             secondary_icon = None
 
-        tile = await self.controller.draw_tile(
+        tile = await self.controller.renderer.draw_transition_tile(
             title=title,
             primary_icon=primary_icon,
             secondary_icon=secondary_icon,
@@ -1080,7 +1080,7 @@ class PulseDefaultSourceDial:
         if not self.pulse.pulse or not self.controller or view is None:
             return Image.new("RGBA", (140, 100), "#00000000")
 
-        image = await self.controller.draw_dial_tile_scroller(
+        image = await self.controller.renderer.draw_selection_dial(
             view=view,
             mini=mini,
         )

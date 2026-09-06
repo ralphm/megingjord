@@ -666,7 +666,8 @@ def tile() -> HAEntityTile:
     )
     tile = HAEntityTile(0, ha, "light.test")
     tile.controller = AsyncMock()
-    tile.controller.draw_tile.return_value = b"tile"
+    tile.controller.renderer = AsyncMock()
+    tile.controller.renderer.draw_state_tile.return_value = b"tile"
     tile.deck = MagicMock()
     return tile
 
@@ -724,7 +725,7 @@ class TestHAEntityTile:
         """
         tile.ha.call_service = AsyncMock(side_effect=Exception("boom"))
         await tile.on_key_change(True)
-        tile.controller.draw_tile.assert_awaited_once()
+        tile.controller.renderer.draw_state_tile.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_on_state(self, tile: HAEntityTile) -> None:
@@ -732,7 +733,7 @@ class TestHAEntityTile:
         A state change redraws the tile.
         """
         await tile.on_state(None)
-        tile.controller.draw_tile.assert_awaited_once()
+        tile.controller.renderer.draw_state_tile.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_set_tile_disconnected(self, tile: HAEntityTile) -> None:
@@ -740,7 +741,7 @@ class TestHAEntityTile:
         Without a state, the tile shows disconnected.
         """
         await tile.set_tile()
-        tile.controller.draw_tile.assert_awaited_once_with(
+        tile.controller.renderer.draw_state_tile.assert_awaited_once_with(
             "Disconnected",
             {"icon-primary": "icon-inactive", "tile-bg": "tile-inactive-bg"},
             "cloud-question-outline",
@@ -755,7 +756,7 @@ class TestHAEntityTile:
         """
         tile.ha.is_missing.return_value = True
         await tile.set_tile()
-        tile.controller.draw_tile.assert_awaited_once_with(
+        tile.controller.renderer.draw_state_tile.assert_awaited_once_with(
             "Entity not found",
             {"icon-primary": "icon-inactive", "tile-bg": "tile-inactive-bg"},
             "alert-outline",
@@ -774,7 +775,7 @@ class TestHAEntityTile:
             "attributes": {"friendly_name": "Test Light"},
         }
         await tile.set_tile()
-        tile.controller.draw_tile.assert_awaited_once_with(
+        tile.controller.renderer.draw_state_tile.assert_awaited_once_with(
             "Test Light",
             {"icon-primary": "icon-active"},
             "lightbulb",
@@ -796,9 +797,14 @@ class TestHAEntityTile:
             },
         }
         await tile.set_tile()
-        colors = tile.controller.draw_tile.await_args.args[1]
+        colors = tile.controller.renderer.draw_state_tile.await_args.args[1]
         assert colors["icon-primary"] == "#FF0000"
-        assert tile.controller.draw_tile.await_args.kwargs["subtitle"] == "On"
+        assert (
+            tile.controller.renderer.draw_state_tile.await_args.kwargs[
+                "subtitle"
+            ]
+            == "On"
+        )
 
     @pytest.mark.asyncio
     async def test_set_tile_off(self, tile: HAEntityTile) -> None:
@@ -811,7 +817,7 @@ class TestHAEntityTile:
             "attributes": {"friendly_name": "Test Light"},
         }
         await tile.set_tile()
-        tile.controller.draw_tile.assert_awaited_once_with(
+        tile.controller.renderer.draw_state_tile.assert_awaited_once_with(
             "Test Light",
             {"icon-primary": "icon-inactive", "tile-bg": "tile-inactive-bg"},
             "lightbulb-off-outline",
@@ -830,7 +836,7 @@ class TestHAEntityTile:
             "attributes": {"friendly_name": "Test Light"},
         }
         await tile.set_tile()
-        tile.controller.draw_tile.assert_awaited_once_with(
+        tile.controller.renderer.draw_state_tile.assert_awaited_once_with(
             "Test Light",
             {"icon-primary": "icon-inactive", "tile-bg": "tile-inactive-bg"},
             "lightbulb",
@@ -863,7 +869,10 @@ def make_dial(entity_id: str, state: dict | None) -> HAEntityDial:
     )
     dial = HAEntityDial(0, ha, entity_id)
     dial.controller = AsyncMock()
-    dial.controller.draw_dial_tile.return_value = Image.new("RGBA", (140, 100))
+    dial.controller.renderer = AsyncMock()
+    dial.controller.renderer.draw_value_dial.return_value = Image.new(
+        "RGBA", (140, 100)
+    )
     dial.deck = MagicMock()
     return dial
 
@@ -888,7 +897,7 @@ class TestHAEntityDial:
         """
         await dial.start(dial.deck)
         dial.ha.subscribe.assert_called_once_with("number.test", dial.on_state)
-        dial.controller.draw_dial_tile.assert_awaited_once()
+        dial.controller.renderer.draw_value_dial.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_start_with_state(self, dial: HAEntityDial) -> None:
@@ -902,7 +911,7 @@ class TestHAEntityDial:
         }
         await dial.start(dial.deck)
         assert dial.value == 0.5
-        dial.controller.draw_dial_tile.assert_awaited_once()
+        dial.controller.renderer.draw_value_dial.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_stop(self, dial: HAEntityDial) -> None:
@@ -951,7 +960,7 @@ class TestHAEntityDial:
         Without a state, the dial shows disconnected.
         """
         await dial.render()
-        dial.controller.draw_dial_tile.assert_awaited_once_with(
+        dial.controller.renderer.draw_value_dial.assert_awaited_once_with(
             title="Disconnected",
             icon="cloud-question-outline",
             value=0.0,
@@ -965,7 +974,7 @@ class TestHAEntityDial:
         """
         dial.ha.is_missing.return_value = True
         await dial.render()
-        dial.controller.draw_dial_tile.assert_awaited_once_with(
+        dial.controller.renderer.draw_value_dial.assert_awaited_once_with(
             title="Entity not found",
             icon="alert-outline",
             value=0.0,
@@ -984,7 +993,7 @@ class TestHAEntityDial:
         }
         dial.value = 0.5
         await dial.render()
-        dial.controller.draw_dial_tile.assert_awaited_once_with(
+        dial.controller.renderer.draw_value_dial.assert_awaited_once_with(
             title="Volume", icon="numeric", value=0.5, mini=False
         )
 
@@ -1003,7 +1012,7 @@ class TestHAEntityDial:
         )
         dial.value = 128 / 255
         await dial.render()
-        dial.controller.draw_dial_tile.assert_awaited_once_with(
+        dial.controller.renderer.draw_value_dial.assert_awaited_once_with(
             title="Lamp", icon="lightbulb", value=128 / 255, mini=False
         )
 
@@ -1025,7 +1034,7 @@ class TestHAEntityDial:
         )
         dial.value = 0.7
         await dial.render()
-        dial.controller.draw_dial_tile.assert_awaited_once_with(
+        dial.controller.renderer.draw_value_dial.assert_awaited_once_with(
             title="TV", icon="speaker", value=0.7, mini=False
         )
 
@@ -1037,7 +1046,7 @@ class TestHAEntityDial:
         dial.deck = None
         image = await dial.render()
         assert isinstance(image, Image.Image)
-        dial.controller.draw_dial_tile.assert_not_called()
+        dial.controller.renderer.draw_value_dial.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_on_dial_turn(self, dial: HAEntityDial) -> None:
@@ -2040,8 +2049,10 @@ def make_alarm_tile(
         0, ha, "alarm_control_panel.home_alarm", arm_service=arm_service
     )
     tile.controller = AsyncMock()
-    tile.controller.draw_tile.return_value = b"tile"
-    tile.controller.get_color = MagicMock(return_value="#996633")
+    tile.controller.renderer = AsyncMock()
+    tile.controller.renderer.draw_state_tile.return_value = b"tile"
+    tile.controller.renderer.draw_transition_tile.return_value = b"tile"
+    tile.controller.renderer.get_color = MagicMock(return_value="#996633")
     tile.controller.start_key_animation = MagicMock()
     tile.controller.stop_key_animation = MagicMock()
     tile.deck = MagicMock()
@@ -2058,7 +2069,11 @@ def make_alarm_dial(state: dict | None) -> HAAlarmDial:
     ha.call_service = AsyncMock()
     dial = HAAlarmDial(0, ha, "alarm_control_panel.home_alarm")
     dial.controller = AsyncMock()
-    dial.controller.draw_dial_tile_scroller.return_value = Image.new(
+    dial.controller.renderer = AsyncMock()
+    dial.controller.renderer.draw_selection_dial.return_value = Image.new(
+        "RGBA", (140, 100)
+    )
+    dial.controller.renderer.draw_state_dial.return_value = Image.new(
         "RGBA", (140, 100)
     )
     dial.deck = MagicMock()
@@ -2083,10 +2098,11 @@ class TestHAAlarmTile:
             }
         )
         await tile.set_tile()
-        tile.controller.draw_tile.assert_awaited_once_with(
+        tile.controller.renderer.draw_transition_tile.assert_awaited_once_with(
             "Home Alarm",
             {"icon-primary": "icon-inactive", "tile-bg": "tile-inactive-bg"},
             "shield-off",
+            "shield-moon",
             subtitle="Disarmed",
             badge=None,
         )
@@ -2104,10 +2120,11 @@ class TestHAAlarmTile:
             }
         )
         await tile.set_tile()
-        tile.controller.draw_tile.assert_awaited_once_with(
+        tile.controller.renderer.draw_transition_tile.assert_awaited_once_with(
             "Home Alarm",
             {"icon-primary": "icon-ok"},
             "shield-home",
+            "shield-off",
             subtitle="Armed home",
             badge=None,
         )
@@ -2125,7 +2142,7 @@ class TestHAAlarmTile:
             }
         )
         await tile.set_tile()
-        tile.controller.draw_tile.assert_awaited_once_with(
+        tile.controller.renderer.draw_state_tile.assert_awaited_once_with(
             "Home Alarm",
             {"icon-primary": "icon-inactive", "tile-bg": "tile-inactive-bg"},
             "shield",
@@ -2146,7 +2163,7 @@ class TestHAAlarmTile:
             }
         )
         await tile.set_tile()
-        tile.controller.draw_tile.assert_awaited_once_with(
+        tile.controller.renderer.draw_state_tile.assert_awaited_once_with(
             "Home Alarm",
             {"icon-primary": "icon-warning"},
             "shield",
@@ -2170,7 +2187,7 @@ class TestHAAlarmTile:
             }
         )
         await tile.set_tile()
-        tile.controller.draw_tile.assert_awaited_once_with(
+        tile.controller.renderer.draw_state_tile.assert_awaited_once_with(
             "Home Alarm",
             {"icon-primary": "icon-alert"},
             "bell-ring",
@@ -2214,7 +2231,7 @@ class TestHAAlarmTile:
         await tile.set_tile()
         image = await tile._render_pulse(math.pi)
         assert image == b"tile"
-        colors = tile.controller.draw_tile.await_args.args[1]
+        colors = tile.controller.renderer.draw_state_tile.await_args.args[1]
         assert colors == {"icon-primary": "rgba(153, 102, 51, 1.00)"}
 
     @pytest.mark.asyncio
@@ -2233,7 +2250,7 @@ class TestHAAlarmTile:
         await tile._render_pulse(math.pi)
         await tile._render_pulse(math.pi)
         await tile._render_pulse(math.pi)
-        assert tile.controller.draw_tile.await_count == 2
+        assert tile.controller.renderer.draw_state_tile.await_count == 2
 
     @pytest.mark.asyncio
     async def test_render_pulse_frames_cleared(self) -> None:
@@ -2249,10 +2266,12 @@ class TestHAAlarmTile:
         )
         await tile.set_tile()
         await tile._render_pulse(math.pi)
-        count = tile.controller.draw_tile.await_count
+        count = tile.controller.renderer.draw_state_tile.await_count
         tile._start_pulse("icon-alert")
         await tile._render_pulse(math.pi)
-        assert tile.controller.draw_tile.await_count == count + 1
+        assert (
+            tile.controller.renderer.draw_state_tile.await_count == count + 1
+        )
 
     @pytest.mark.asyncio
     async def test_start_pulse_no_controller(self) -> None:
@@ -2450,7 +2469,7 @@ class TestHAAlarmTile:
         )
         tile.ha.call_service = AsyncMock(side_effect=Exception("boom"))
         await tile.on_key_change(True)
-        tile.controller.draw_tile.assert_awaited()
+        tile.controller.renderer.draw_transition_tile.assert_awaited()
 
     @pytest.mark.asyncio
     async def test_set_tile_no_controller(self) -> None:
@@ -2474,7 +2493,7 @@ class TestHAAlarmTile:
         """
         tile = make_alarm_tile(None)
         await tile.set_tile()
-        tile.controller.draw_tile.assert_awaited_once_with(
+        tile.controller.renderer.draw_state_tile.assert_awaited_once_with(
             "Disconnected",
             {"icon-primary": "icon-inactive", "tile-bg": "tile-inactive-bg"},
             "cloud-question-outline",
@@ -2495,10 +2514,11 @@ class TestHAAlarmTile:
             }
         )
         await tile.set_tile()
-        tile.controller.draw_tile.assert_awaited_once_with(
+        tile.controller.renderer.draw_transition_tile.assert_awaited_once_with(
             "Home Alarm",
             {"icon-primary": "icon-active"},
             "shield",
+            "shield-off",
             subtitle="Unknown",
             badge=None,
         )
@@ -2516,7 +2536,7 @@ class TestHAAlarmTile:
             }
         )
         await tile.set_tile()
-        tile.controller.draw_tile.assert_awaited_once_with(
+        tile.controller.renderer.draw_state_tile.assert_awaited_once_with(
             "Home Alarm",
             {"icon-primary": "icon-warning"},
             "shield-outline",
@@ -2543,10 +2563,11 @@ class TestHAAlarmTile:
             }
         )
         await tile.set_tile()
-        tile.controller.draw_tile.assert_awaited_once_with(
+        tile.controller.renderer.draw_transition_tile.assert_awaited_once_with(
             "Home Alarm",
             {"icon-primary": "icon-ok"},
             "custom",
+            "shield-off",
             subtitle="Armed away",
             badge=None,
         )
@@ -2564,7 +2585,7 @@ class TestHAAlarmTile:
             }
         )
         await tile.set_tile()
-        tile.controller.draw_tile.assert_awaited_once_with(
+        tile.controller.renderer.draw_state_tile.assert_awaited_once_with(
             "Home Alarm",
             {"icon-primary": "icon-inactive", "tile-bg": "tile-inactive-bg"},
             "shield",
@@ -2882,7 +2903,7 @@ class TestHAAlarmDial:
         )
         await dial.update_view()
         await dial.render()
-        dial.controller.draw_dial_tile_scroller.assert_awaited_once_with(
+        dial.controller.renderer.draw_selection_dial.assert_awaited_once_with(
             dial.current_view, mini=False
         )
 
@@ -2916,7 +2937,7 @@ class TestHAAlarmDial:
         )
         await dial.update_view()
         await dial.render()
-        dial.controller.draw_dial_tile_state.assert_awaited_once_with(
+        dial.controller.renderer.draw_state_dial.assert_awaited_once_with(
             "Triggered", "bell-ring", mini=False
         )
 
@@ -2934,7 +2955,7 @@ class TestHAAlarmDial:
         )
         await dial.update_view()
         await dial.render(mini=True)
-        dial.controller.draw_dial_tile_state.assert_awaited_once_with(
+        dial.controller.renderer.draw_state_dial.assert_awaited_once_with(
             "Arming", "shield", mini=True
         )
 
@@ -3004,7 +3025,7 @@ class TestHAAlarmDial:
         dial.ha.subscribe.assert_called_once_with(
             "alarm_control_panel.home_alarm", dial.on_state
         )
-        dial.controller.draw_dial_tile_scroller.assert_awaited_once_with(
+        dial.controller.renderer.draw_selection_dial.assert_awaited_once_with(
             dial.current_view, mini=False
         )
 

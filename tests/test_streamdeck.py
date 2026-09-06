@@ -11,7 +11,8 @@ import pytest
 from aiohttp import web
 
 from megingjord.color_utils import get_colors
-from megingjord.streamdeck import DeckController
+from megingjord.icon import get_icon
+from megingjord.streamdeck import DeckController, svg_icon
 
 pytestmark = pytest.mark.filterwarnings("ignore::aiohttp.web.NotAppKeyWarning")
 
@@ -68,6 +69,34 @@ class TestGetColor:
             )
             == "#990000"
         )
+
+
+class TestSvgIcon:
+    """
+    Tests for L{megingjord.streamdeck.svg_icon} and
+    L{megingjord.icon.get_icon}.
+    """
+
+    @pytest.mark.asyncio
+    async def test_get_icon_cached(self) -> None:
+        """
+        The parsed icon SVG is cached per icon and size.
+        """
+        svg1 = await get_icon("shield", 80)
+        svg2 = await get_icon("shield", 80)
+        assert svg1 is svg2
+
+    @pytest.mark.asyncio
+    async def test_svg_icon_colors_do_not_share(self) -> None:
+        """
+        Icons with different colors do not share the cached SVG.
+        """
+        svg1 = await svg_icon("shield", "red", 80)
+        svg2 = await svg_icon("shield", "blue", 80)
+        assert svg1 is not svg2
+        fill1 = str(next(iter(svg1)).fill)
+        fill2 = str(next(iter(svg2)).fill)
+        assert fill1 != fill2
 
 
 class TestKeyAnimation:

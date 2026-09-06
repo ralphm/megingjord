@@ -1055,6 +1055,7 @@ class HAAlarmTile(HAEntityTile):
     _pulse_subtitle: str | None = field(init=False, default=None)
     _pulse_badge: str | None = field(init=False, default=None)
     _pulse_rgb: tuple[int, int, int] = field(init=False, default=(0, 0, 0))
+    _pulse_frames: dict[float, bytes] = field(init=False, factory=dict)
 
     async def on_key_change(self, key_state: bool) -> None:
         """
@@ -1169,6 +1170,7 @@ class HAAlarmTile(HAEntityTile):
             int(hex_color[3:5], 16),
             int(hex_color[5:7], 16),
         )
+        self._pulse_frames.clear()
         self.controller.start_key_animation(self.key, self._render_pulse)
 
     def _stop_pulse(self) -> None:
@@ -1180,15 +1182,16 @@ class HAAlarmTile(HAEntityTile):
 
     async def _render_pulse(self, phase: float) -> bytes:
         """
-        Render the tile with a pulsing icon.
+        Render the tile with a pulsing icon, reusing cached frames.
         """
-        r, g, b = self._pulse_rgb
-        colors = {
-            "icon-primary": (
-                f"rgba({r}, {g}, {b}, {self._pulse_alpha(phase):.2f})"
-            )
-        }
-        return await self._draw(colors)
+        alpha = round(self._pulse_alpha(phase), 2)
+        frame = self._pulse_frames.get(alpha)
+        if frame is None:
+            r, g, b = self._pulse_rgb
+            colors = {"icon-primary": f"rgba({r}, {g}, {b}, {alpha:.2f})"}
+            frame = await self._draw(colors)
+            self._pulse_frames[alpha] = frame
+        return frame
 
     def _pulse_alpha(self, phase: float) -> float:
         """

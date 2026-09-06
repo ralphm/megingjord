@@ -9,6 +9,7 @@ import re
 from pathlib import Path
 
 import aiohttp
+from async_lru import alru_cache
 from svgelements import SVG
 from xdg_base_dirs import xdg_cache_home
 
@@ -37,12 +38,13 @@ async def download_icon(icon: str, filename: Path) -> None:
                 f.write(data)
 
 
+@alru_cache(maxsize=128)
 async def get_icon(icon: str, size: int) -> SVG:
     """
     Get an icon.
 
     Icons are retrieved from the MaterialDesign (mdi) repository and cached as
-    local files. The resulting SVG object is not cached.
+    local files. The parsed SVG is cached per icon and size.
     """
 
     if not ICON_CHARS.match(icon):
@@ -55,5 +57,7 @@ async def get_icon(icon: str, size: int) -> SVG:
     if not icon_filename.exists():
         logger.debug(f"Need to download {icon}")
         await download_icon(icon, icon_filename)
+    else:
+        logger.debug(f"Using cached icon {icon}")
 
     return SVG.parse(icon_filename, reify=False, width=size, height=size)

@@ -7,6 +7,7 @@ Streamdeck utilities.
 from __future__ import annotations
 
 import asyncio
+import copy
 import logging
 import math
 import textwrap
@@ -867,7 +868,7 @@ async def svg_icon(
     This reads the icon from disk, applies the given color, and applies a
     matrix to scale and position with the given size and coordinates.
     """
-    svg = await get_icon(icon=icon, size=size)
+    svg = copy.deepcopy(await get_icon(icon=icon, size=size))
     next(iter(svg)).fill = Color(color)
 
     if pos_x or pos_y:

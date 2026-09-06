@@ -2129,6 +2129,43 @@ class TestHAAlarmTile:
         assert colors == {"icon-primary": "rgba(153, 102, 51, 1.00)"}
 
     @pytest.mark.asyncio
+    async def test_render_pulse_reuses_frames(self) -> None:
+        """
+        The pulse reuses frames with the same alpha.
+        """
+        tile = make_alarm_tile(
+            {
+                "entity_id": "alarm_control_panel.home_alarm",
+                "state": "pending",
+                "attributes": {"friendly_name": "Home Alarm"},
+            }
+        )
+        await tile.set_tile()
+        await tile._render_pulse(math.pi)
+        await tile._render_pulse(math.pi)
+        await tile._render_pulse(math.pi)
+        assert tile.controller.draw_tile.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_render_pulse_frames_cleared(self) -> None:
+        """
+        Starting the pulse again clears the cached frames.
+        """
+        tile = make_alarm_tile(
+            {
+                "entity_id": "alarm_control_panel.home_alarm",
+                "state": "pending",
+                "attributes": {"friendly_name": "Home Alarm"},
+            }
+        )
+        await tile.set_tile()
+        await tile._render_pulse(math.pi)
+        count = tile.controller.draw_tile.await_count
+        tile._start_pulse("icon-alert")
+        await tile._render_pulse(math.pi)
+        assert tile.controller.draw_tile.await_count == count + 1
+
+    @pytest.mark.asyncio
     async def test_start_pulse_no_controller(self) -> None:
         """
         Starting the pulse without a controller does nothing.

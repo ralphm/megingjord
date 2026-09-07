@@ -252,7 +252,7 @@ class HAWebSocketClient:
     state caching and per-entity subscriptions.
     """
 
-    # pylint: disable=R0902
+    # pylint: disable=too-many-instance-attributes
 
     app: web.Application
     url: str
@@ -316,7 +316,7 @@ class HAWebSocketClient:
         while True:
             try:
                 await self._connect()
-            except Exception:  # pylint: disable=W0718
+            except Exception:  # pylint: disable=broad-exception-caught
                 logger.error(
                     "Error connecting to Home Assistant", exc_info=True
                 )
@@ -655,7 +655,7 @@ class HAWebSocketClient:
             domain = entity_id.split(".")[0]
             translations = icons.get(domain, {}).get(translation_key)
             return icon_from_translations(state, translations)
-        except Exception:  # pylint: disable=W0718
+        except Exception:  # pylint: disable=broad-exception-caught
             logger.warning(
                 "Failed to resolve icon for %s", entity_id, exc_info=True
             )
@@ -715,7 +715,7 @@ class HAWebSocketClient:
             if translations is None:
                 translations = icons.get("_")
             return icon_from_translations(state, translations)
-        except Exception:  # pylint: disable=W0718
+        except Exception:  # pylint: disable=broad-exception-caught
             logger.warning(
                 "Failed to resolve icon for %s", entity_id, exc_info=True
             )
@@ -808,7 +808,7 @@ class HAEntityTile:
             await self.ha.call_service(
                 "homeassistant", "toggle", entity_id=self.entity_id
             )
-        except Exception:  # pylint: disable=W0718
+        except Exception:  # pylint: disable=broad-exception-caught
             logger.error("Failed to toggle %s", self.entity_id, exc_info=True)
             await self.set_tile()
 
@@ -995,7 +995,7 @@ class HAEntityDial:
         self.pending += 1
         try:
             await self._set_value(self.value)
-        except Exception:  # pylint: disable=W0718
+        except Exception:  # pylint: disable=broad-exception-caught
             logger.error("Failed to set %s", self.entity_id, exc_info=True)
         finally:
             self.pending -= 1
@@ -1005,7 +1005,7 @@ class HAEntityDial:
         Get the current value as a fraction of the range.
         """
 
-        # pylint: disable=R0911
+        # pylint: disable=too-many-return-statements
         domain = self.entity_id.split(".")[0]
         attributes = state.get("attributes", {})
 
@@ -1083,7 +1083,7 @@ class HAAlarmTile(HAEntityTile):
     Stream Deck key for arming and disarming an alarm control panel.
     """
 
-    # pylint: disable=R0902
+    # pylint: disable=too-many-instance-attributes
 
     arm_service: str = field(kw_only=True)
 
@@ -1116,7 +1116,7 @@ class HAAlarmTile(HAEntityTile):
             await self.ha.call_service(
                 "alarm_control_panel", service, entity_id=self.entity_id
             )
-        except Exception:  # pylint: disable=W0718
+        except Exception:  # pylint: disable=broad-exception-caught
             logger.error(
                 "Failed to %s %s", service, self.entity_id, exc_info=True
             )
@@ -1130,7 +1130,7 @@ class HAAlarmTile(HAEntityTile):
         transient and unavailable states show a state tile.
         """
 
-        # pylint: disable=R0912,R0915
+        # pylint: disable=too-many-branches,too-many-statements
         if not self.controller or not self.deck:
             return
 
@@ -1434,7 +1434,7 @@ class HAAlarmDial:
             await self.ha.call_service(
                 "alarm_control_panel", service, entity_id=self.entity_id
             )
-        except Exception:  # pylint: disable=W0718
+        except Exception:  # pylint: disable=broad-exception-caught
             logger.error(
                 "Failed to %s %s", service, self.entity_id, exc_info=True
             )

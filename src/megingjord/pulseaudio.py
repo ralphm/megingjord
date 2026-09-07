@@ -326,7 +326,7 @@ class PulseAudioCoordinator:
     changes to the current default sink.
     """
 
-    # pylint: disable=R0902
+    # pylint: disable=too-many-instance-attributes
 
     app: web.Application
     output_weights: list[dict[str, Any]]
@@ -372,7 +372,8 @@ class PulseAudioCoordinator:
             while True:
                 pulse = await self.get_pulse()
 
-                await pulse._connected.wait()  # pylint: disable=W0212
+                # pylint: disable=protected-access
+                await pulse._connected.wait()
 
                 logger.info("Subscribing to events")
 
@@ -386,7 +387,7 @@ class PulseAudioCoordinator:
                 except PulseDisconnected:
                     logger.info("Disconnected from PulseAudio")
                     self.pulse = None
-                except Exception:  # pylint: disable=W0718
+                except Exception:  # pylint: disable=broad-exception-caught
                     logger.error(
                         "Exception raised while processing events",
                         exc_info=True,
@@ -417,7 +418,7 @@ class PulseAudioCoordinator:
         Extract default sink from server info.
         """
         pulse = await self.get_pulse()
-        await pulse._connected.wait()  # pylint: disable=W0212
+        await pulse._connected.wait()  # pylint: disable=protected-access
         info = await pulse.server_info()
 
         if info.default_sink_name != self.default_sink_name:
@@ -522,7 +523,7 @@ class PulseAudioCoordinator:
         try:
             outputs = await self.get_outputs()
             logger.debug(f"Possible outputs: {pprint.pformat(outputs)}")
-        except Exception:  # pylint: disable=W0718
+        except Exception:
             logger.error("oops", exc_info=True)
             raise
 
@@ -548,7 +549,7 @@ class PulseAudioCoordinator:
         Extract default source from server info.
         """
         pulse = await self.get_pulse()
-        await pulse._connected.wait()  # pylint: disable=W0212
+        await pulse._connected.wait()  # pylint: disable=protected-access
         info = await pulse.server_info()
 
         if info.default_source_name != self.default_source_name:
@@ -608,7 +609,7 @@ class PulseAudioCoordinator:
         """
         Get the PulseAudio input for the given card and port.
         """
-        # pylint: disable-next=W0622
+        # pylint: disable-next=redefined-builtin
         input = self.inputs.get((card.index, port.name))
         if input is None:
             input = PulseInput(self, card=card, port=port)
@@ -656,7 +657,7 @@ class PulseAudioCoordinator:
         try:
             sources = await self.get_inputs()
             logger.debug(f"Possible inputs: {pprint.pformat(sources)}")
-        except Exception:  # pylint: disable=W0718
+        except Exception:
             logger.error("oops", exc_info=True)
             raise
 
@@ -723,7 +724,7 @@ class PulseDefaultSinkKey:
         logger.debug("      Setting as default")
         try:
             await self.pulse.set_default_sink(output)
-        except Exception:  # pylint: disable=W0718
+        except Exception:  # pylint: disable=broad-exception-caught
             logger.error("Failed to set default sink", exc_info=True)
 
     async def on_sink(self, sink_name: str) -> None:
@@ -752,7 +753,7 @@ class PulseDefaultSinkKey:
             else:
                 secondary_icon = None
 
-        except Exception:  # pylint: disable=W0718
+        except Exception:  # pylint: disable=broad-exception-caught
             logger.error("Failed to retrieve output details", exc_info=True)
             primary_icon = "help-rhombus-outline"
             secondary_icon = None
@@ -929,7 +930,7 @@ class PulseDefaultSourceKey:
         logger.debug("      Setting as default")
         try:
             await self.pulse.set_default_source(source)
-        except Exception:  # pylint: disable=W0718
+        except Exception:  # pylint: disable=broad-exception-caught
             logger.error("Failed to set default source", exc_info=True)
 
     async def on_source(self, source_name: str) -> None:
@@ -958,7 +959,7 @@ class PulseDefaultSourceKey:
             else:
                 secondary_icon = None
 
-        except Exception:  # pylint: disable=W0718
+        except Exception:  # pylint: disable=broad-exception-caught
             logger.error("Failed to retrieve source details", exc_info=True)
             primary_icon = "help-rhombus-outline"
             secondary_icon = None

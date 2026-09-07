@@ -443,7 +443,7 @@ class GoogleMeetCoordinator:
                 try:
                     event = json.loads(msg.data)
                     await self.handle_event(event)
-                except Exception:  # pylint: disable=W0718
+                except Exception:  # pylint: disable=broad-exception-caught
                     logger.error("Error while handling event", exc_info=True)
             elif msg.type == aiohttp.WSMsgType.ERROR:
                 logger.error(

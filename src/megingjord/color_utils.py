@@ -114,7 +114,7 @@ def xyb_to_rgb(
     The returned values should be floats in the range [0, 1], and should be
     capped beyond that.
     """
-    # pylint: disable=C0103
+    # pylint: disable=invalid-name
     z: float = 1.0 - x - y
     Y: float = brightness
     X: float = (Y / y) * x

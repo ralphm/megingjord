@@ -82,7 +82,7 @@ def main(
         megingjord.start()
         logger.info("Exiting normally.")
         sys.exit(0)
-    except Exception as exc:  # pylint: disable=W0718
+    except Exception as exc:  # pylint: disable=broad-exception-caught
         logger.critical(f"Exiting abnormally: {exc}", exc_info=True)
         sys.exit(1)
     finally:

@@ -38,7 +38,7 @@ def wrap_text(title: str, width: int, max_lines: int) -> list[str]:
     return lines
 
 
-def draw_text(  # pylint: disable=R0913
+def draw_text(  # pylint: disable=too-many-arguments
     draw: ImageDraw.ImageDraw,
     text: str,
     pos: tuple[float, float],
@@ -84,7 +84,7 @@ class Renderer:
         svg = await svg_icon(icon=icon, color=color, size=size)
         return svg_to_image(svg, width=size, height=size)
 
-    async def _draw_icon_at(  # pylint: disable=R0913
+    async def _draw_icon_at(  # pylint: disable=too-many-arguments
         self,
         image: Image.Image,
         icon: str,
@@ -98,7 +98,7 @@ class Renderer:
         icon_image = await self.draw_icon(icon, color, size)
         image.alpha_composite(icon_image, pos)
 
-    async def _draw_tile(  # pylint: disable=R0913
+    async def _draw_tile(  # pylint: disable=too-many-arguments
         self,
         title: str,
         colors: dict[str, str] | None,
@@ -169,7 +169,7 @@ class Renderer:
             image.convert("RGB").save(jpg, format="JPEG", quality=95)
             return jpg.getvalue()
 
-    async def draw_state_tile(  # pylint: disable=R0913
+    async def draw_state_tile(  # pylint: disable=too-many-arguments
         self,
         title: str,
         colors: dict[str, str] | None = None,  # color overrides
@@ -184,7 +184,7 @@ class Renderer:
             title, colors, icon, None, subtitle, badge
         )
 
-    async def draw_transition_tile(  # pylint: disable=R0913
+    async def draw_transition_tile(  # pylint: disable=too-many-arguments
         self,
         title: str,
         colors: dict[str, str] | None = None,  # color overrides
@@ -203,7 +203,7 @@ class Renderer:
             title, colors, primary_icon, secondary_icon, subtitle, badge
         )
 
-    async def _draw_dial(  # pylint: disable=R0913,R0914
+    async def _draw_dial(  # pylint: disable=too-many-arguments,too-many-locals
         self,
         title: str,
         icon: str,
@@ -401,7 +401,7 @@ class Renderer:
 
         return image
 
-    async def draw_state_dial(  # pylint: disable=R0913
+    async def draw_state_dial(  # pylint: disable=too-many-arguments
         self,
         title: str,
         state: str,

@@ -69,6 +69,25 @@ line-length = 79
 [tool.isort]
 profile = "black"
 
+[tool.pylint]
+enable = [
+    "use-symbolic-message-instead",
+    "useless-suppression",
+]
+# The disable list replaces the default disabled messages, so the
+# defaults must be repeated here, minus the checks enabled above.
+disable = [
+    "raw-checker-failed",
+    "bad-inline-option",
+    "locally-disabled",
+    "file-ignored",
+    "suppressed-message",
+    "deprecated-pragma",
+    "use-implicit-booleaness-not-comparison-to-string",
+    "use-implicit-booleaness-not-comparison-to-zero",
+    "logging-fstring-interpolation",
+]
+
 [tool.hatch.envs.default]
 dependencies = [
   "pytest",

@@ -185,7 +185,7 @@ class DeckController:
     Stream Deck controller
     """
 
-    # pylint: disable=R0902,R0904
+    # pylint: disable=too-many-instance-attributes
 
     app: web.Application
     renderer: Renderer = field(init=False)
@@ -270,7 +270,7 @@ class DeckController:
 
         try:
             await self.keys[key].on_key_change(key_state)
-        except Exception:  # pylint: disable=W0718
+        except Exception:  # pylint: disable=broad-exception-caught
             logger.error("Failed to process key change", exc_info=True)
 
     def register_dial(self, dial: Dial) -> None:
@@ -312,7 +312,7 @@ class DeckController:
                 assert isinstance(value, int)
                 await self.dials[dial].on_dial_turn(value)
 
-        except Exception:  # pylint: disable=W0718
+        except Exception:  # pylint: disable=broad-exception-caught
             logger.error("Failed to process dial change", exc_info=True)
 
         await self.render_lcd()
@@ -377,9 +377,9 @@ class DeckController:
 
                     try:
                         await self.stop()
-                    except Exception:  # pylint: disable=W0718
+                    except Exception:  # pylint: disable=broad-exception-caught
                         logger.error("Oops stopping", exc_info=True)
-                except Exception:  # pylint: disable=W0718
+                except Exception:  # pylint: disable=broad-exception-caught
                     logger.error("Oops", exc_info=True)
 
                 logger.info("Waiting 10 seconds to reconnect to Stream Deck.")
@@ -398,7 +398,7 @@ class DeckController:
                 await key.stop()
             except TransportError:
                 pass
-            except Exception:  # pylint: disable=W0718
+            except Exception:  # pylint: disable=broad-exception-caught
                 logger.error(f"Error stopping key {key}", exc_info=True)
 
         for dial in self.dials.values():
@@ -406,7 +406,7 @@ class DeckController:
                 await dial.stop()
             except TransportError:
                 pass
-            except Exception:  # pylint: disable=W0718
+            except Exception:  # pylint: disable=broad-exception-caught
                 logger.error(f"Error stopping dial {dial}", exc_info=True)
 
         for task in self.animations.values():

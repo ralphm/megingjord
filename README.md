@@ -5,7 +5,7 @@ Megingjord is a set of tools for controlling devices and applications using a St
 It currently has support for:
 
 - Selecting audio output devices using PulseAudio
-- Toggling Hue lights
+- Toggling lights and other entities using Home Assistant
 - Button actions for Google Meet (using a browser plugin)
 - Clock on the Stream Deck + LCD
 - Brightness of the Stream Deck + LCD display

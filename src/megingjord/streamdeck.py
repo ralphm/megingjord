@@ -488,7 +488,7 @@ class BrightnessDial:
         self.deck = None
 
         if self.controller is not None:
-            await self.controller.render_lcd(tile_changed=self.dial)
+            await self.controller.render_lcd()
 
     async def render(self, mini: bool = False) -> Image.Image:
         """
@@ -509,6 +509,8 @@ class BrightnessDial:
         """
         Called when the dial got pressed or released.
         """
+        if dial_state and self.controller:
+            await self.controller.render_lcd(tile_changed=self.dial)
 
     async def on_dial_turn(self, value: int) -> None:
         """

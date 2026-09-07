@@ -794,7 +794,7 @@ class PulseDefaultSinkDial:
         """
 
         if self.controller is not None:
-            await self.controller.render_lcd(tile_changed=self.dial)
+            await self.controller.render_lcd()
 
     async def on_sink(self, sink_name: str) -> None:
         """
@@ -807,7 +807,7 @@ class PulseDefaultSinkDial:
 
         self.current_view = await self.scroller_view_from_default_output()
 
-        await self.controller.render_lcd(tile_changed=self.dial)
+        await self.controller.render_lcd()
 
     async def on_dial_push(self, dial_state: bool) -> None:
         """
@@ -826,6 +826,7 @@ class PulseDefaultSinkDial:
 
         if dial_state:
             await self.pulse.set_default_sink(output)
+            await self.controller.render_lcd(tile_changed=self.dial)
 
     async def on_dial_turn(self, value: int) -> None:
         """
@@ -1000,7 +1001,7 @@ class PulseDefaultSourceDial:
         Stop the dial.
         """
         if self.controller is not None:
-            await self.controller.render_lcd(tile_changed=self.dial)
+            await self.controller.render_lcd()
 
     async def on_source(self, source_name: str) -> None:
         """
@@ -1013,7 +1014,7 @@ class PulseDefaultSourceDial:
 
         self.current_view = await self.scroller_view_from_default_source()
 
-        await self.controller.render_lcd(tile_changed=self.dial)
+        await self.controller.render_lcd()
 
     async def on_dial_push(self, dial_state: bool) -> None:
         """
@@ -1032,6 +1033,7 @@ class PulseDefaultSourceDial:
 
         if dial_state:
             await self.pulse.set_default_source(source)
+            await self.controller.render_lcd(tile_changed=self.dial)
 
     async def on_dial_turn(self, value: int) -> None:
         """

@@ -923,7 +923,7 @@ class TestHAEntityDial:
         await dial.start(dial.deck)
         await dial.stop()
         assert unsubscribed == [True]
-        dial.controller.render_lcd.assert_awaited_once_with(tile_changed=0)
+        dial.controller.render_lcd.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_on_state(self, dial: HAEntityDial) -> None:
@@ -937,7 +937,7 @@ class TestHAEntityDial:
         }
         await dial.on_state(state)
         assert dial.value == 0.5
-        dial.controller.render_lcd.assert_awaited_once_with(tile_changed=0)
+        dial.controller.render_lcd.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_on_state_pending(self, dial: HAEntityDial) -> None:
@@ -952,7 +952,7 @@ class TestHAEntityDial:
         }
         await dial.on_state(state)
         assert dial.value == 0.0
-        dial.controller.render_lcd.assert_awaited_once_with(tile_changed=0)
+        dial.controller.render_lcd.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_render_disconnected(self, dial: HAEntityDial) -> None:
@@ -2887,7 +2887,7 @@ class TestHAAlarmDial:
         await dial.on_state(dial.ha.get_state.return_value)
         assert dial.current_view.selected == 2
         assert dial.current_view.selected_item.current
-        dial.controller.render_lcd.assert_awaited_once_with(tile_changed=0)
+        dial.controller.render_lcd.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_render(self) -> None:
@@ -3076,7 +3076,7 @@ class TestHAAlarmDial:
         await dial.start(MagicMock())
         await dial.stop()
         dial.ha.subscribe.return_value.assert_called_once_with()
-        dial.controller.render_lcd.assert_awaited_with(tile_changed=0)
+        dial.controller.render_lcd.assert_awaited_with()
 
     @pytest.mark.asyncio
     async def test_stop_no_controller(self) -> None:

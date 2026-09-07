@@ -919,7 +919,7 @@ class HAEntityDial:
             self.send_task.cancel()
 
         if self.controller is not None:
-            await self.controller.render_lcd(tile_changed=self.dial)
+            await self.controller.render_lcd()
 
     async def on_state(self, state: dict[str, Any] | None) -> None:
         """
@@ -928,7 +928,7 @@ class HAEntityDial:
         if state is not None and self.pending == 0:
             self.value = self._get_value(state)
         if self.controller is not None:
-            await self.controller.render_lcd(tile_changed=self.dial)
+            await self.controller.render_lcd()
 
     async def render(self, mini: bool = False) -> Image.Image:
         """
@@ -963,6 +963,8 @@ class HAEntityDial:
         """
         Called when the dial got pressed or released.
         """
+        if dial_state and self.controller:
+            await self.controller.render_lcd(tile_changed=self.dial)
 
     async def on_dial_turn(self, value: int) -> None:
         """
@@ -1349,7 +1351,7 @@ class HAAlarmDial:
             unsubscribe()
 
         if self.controller is not None:
-            await self.controller.render_lcd(tile_changed=self.dial)
+            await self.controller.render_lcd()
 
     async def on_state(self, _state: dict[str, Any] | None) -> None:
         """
@@ -1357,7 +1359,7 @@ class HAAlarmDial:
         """
         await self.update_view()
         if self.controller is not None:
-            await self.controller.render_lcd(tile_changed=self.dial)
+            await self.controller.render_lcd()
 
     async def update_view(self) -> None:
         """
@@ -1415,6 +1417,8 @@ class HAAlarmDial:
         """
         if not dial_state or not self.controller:
             return
+
+        await self.controller.render_lcd(tile_changed=self.dial)
 
         if self.state in ALARM_TRANSIENT:
             service = "alarm_disarm"

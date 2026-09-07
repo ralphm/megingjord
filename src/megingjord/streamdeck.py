@@ -414,7 +414,7 @@ class DeckController:
             self.deck = None
         await asyncio.sleep(0.5)
 
-    async def render_lcd(self, tile_changed: int | None = None) -> None:
+    async def render_lcd(self, interacted_dial: int | None = None) -> None:
         """
         Render the LCD display.
         """
@@ -425,7 +425,7 @@ class DeckController:
             "RGBA", (800, 100), self.renderer.get_color("lcd-bg")
         )
 
-        if tile_changed in (1, 2):
+        if interacted_dial in (1, 2):
             self.status_inhibited = time.time() + 1
 
         status_bar: bool = time.time() > self.status_inhibited
@@ -510,7 +510,7 @@ class BrightnessDial:
         Called when the dial got pressed or released.
         """
         if dial_state and self.controller:
-            await self.controller.render_lcd(tile_changed=self.dial)
+            await self.controller.render_lcd(interacted_dial=self.dial)
 
     async def on_dial_turn(self, value: int) -> None:
         """
@@ -521,7 +521,7 @@ class BrightnessDial:
 
         change = round(value / abs(value) * (1.6 ** abs(value) - 1))
         self.controller.set_brightness(self.deck.brightness + change)
-        await self.controller.render_lcd(tile_changed=self.dial)
+        await self.controller.render_lcd(interacted_dial=self.dial)
 
 
 def create_touchscreen_tile_image(_deck: StreamDeck) -> Image.Image:

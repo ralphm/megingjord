@@ -1049,6 +1049,17 @@ class TestHAEntityDial:
         dial.controller.renderer.draw_value_dial.assert_not_called()
 
     @pytest.mark.asyncio
+    async def test_on_dial_push(self, dial: HAEntityDial) -> None:
+        """
+        Pushing the dial inhibits the status bar; releasing does not.
+        """
+        await dial.on_dial_push(True)
+        dial.controller.render_lcd.assert_awaited_once_with(interacted_dial=0)
+        dial.controller.render_lcd.reset_mock()
+        await dial.on_dial_push(False)
+        dial.controller.render_lcd.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_on_dial_turn(self, dial: HAEntityDial) -> None:
         """
         Turning the dial updates the value, renders and sends the command.
@@ -1061,7 +1072,7 @@ class TestHAEntityDial:
         dial.ha.call_service = AsyncMock()
         await dial.on_dial_turn(1)
         assert dial.value == pytest.approx(0.01)
-        dial.controller.render_lcd.assert_awaited_once_with(tile_changed=0)
+        dial.controller.render_lcd.assert_awaited_once_with(interacted_dial=0)
         await asyncio.sleep(SEND_DELAY_SECONDS + 0.05)
         dial.ha.call_service.assert_awaited_once()
         value = dial.ha.call_service.await_args.kwargs["data"]["value"]
@@ -1095,7 +1106,7 @@ class TestHAEntityDial:
         dial.ha.call_service = AsyncMock()
         await dial.on_dial_turn(1)
         assert dial.value == pytest.approx(0.01)
-        dial.controller.render_lcd.assert_awaited_once_with(tile_changed=0)
+        dial.controller.render_lcd.assert_awaited_once_with(interacted_dial=0)
         await asyncio.sleep(SEND_DELAY_SECONDS + 0.05)
         dial.ha.call_service.assert_not_called()
 
@@ -1351,7 +1362,7 @@ class TestHAEntityDial:
         }
         dial.ha.call_service = AsyncMock(side_effect=Exception("boom"))
         await dial.on_dial_turn(1)
-        dial.controller.render_lcd.assert_awaited_once_with(tile_changed=0)
+        dial.controller.render_lcd.assert_awaited_once_with(interacted_dial=0)
         await asyncio.sleep(SEND_DELAY_SECONDS + 0.05)
         while dial.pending > 0:
             await asyncio.sleep(0.01)
@@ -2765,6 +2776,7 @@ class TestHAAlarmDial:
         await dial.update_view()
         await dial.on_dial_push(False)
         dial.ha.call_service.assert_not_called()
+        dial.controller.render_lcd.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_on_dial_push_arms(self) -> None:
@@ -2786,6 +2798,7 @@ class TestHAAlarmDial:
             "alarm_arm_home",
             entity_id="alarm_control_panel.home_alarm",
         )
+        dial.controller.render_lcd.assert_awaited_once_with(interacted_dial=0)
 
     @pytest.mark.asyncio
     async def test_on_dial_push_disarms(self) -> None:
@@ -2807,6 +2820,7 @@ class TestHAAlarmDial:
             "alarm_disarm",
             entity_id="alarm_control_panel.home_alarm",
         )
+        dial.controller.render_lcd.assert_awaited_once_with(interacted_dial=0)
 
     @pytest.mark.asyncio
     async def test_on_dial_push_service_error(self) -> None:

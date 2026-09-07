@@ -90,7 +90,7 @@ def icon_from_range(value: float, range_icons: dict[str, str]) -> str | None:
     Get an icon from a numeric range, like the frontend.
     """
     thresholds = []
-    for key, icon in range_icons.items():
+    for key in range_icons.keys():
         try:
             thresholds.append((float(key), key))
         except ValueError:
@@ -167,6 +167,8 @@ class HAWebSocketClient:
     Thin wrapper around L{HomeAssistantClient} from hass_client, adding
     state caching and per-entity subscriptions.
     """
+
+    # pylint: disable=R0902
 
     app: web.Application
     url: str
@@ -841,6 +843,8 @@ class HAEntityDial:
         """
         Get the current value as a fraction of the range.
         """
+
+        # pylint: disable=R0911
         domain = self.entity_id.split(".")[0]
         attributes = state.get("attributes", {})
 

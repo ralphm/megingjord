@@ -232,7 +232,8 @@ class GoogleMeetActionKey:
         if not self.controller or not self.deck:
             return
 
-        event, title, icon, color = ACTION_KEYS[self.control]
+        _event, title, icon, color = ACTION_KEYS[self.control]
+
         if self.title:
             title = self.title
 

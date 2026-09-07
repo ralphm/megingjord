@@ -65,3 +65,11 @@ class TestGetColors:
 
         assert colors["blueish"] == "#006699"
         assert colors["icon-primary"] == "#006699"
+
+    def test_icon_ok(self) -> None:
+        """
+        The icon-ok color is green in both themes.
+        """
+
+        assert color_utils.get_colors("default")["icon-ok"] == "#009900"
+        assert color_utils.get_colors("dracula")["icon-ok"] == "#50fa7b"

@@ -100,14 +100,14 @@ class GoogleMeetMuteKey:
             return
 
         icon = NOT_READY_ICONS[self.control]
-        tile = await self.controller.draw_tile(
+        tile = await self.controller.renderer.draw_state_tile(
             title=self.control,
             colors={
                 "tile-fg": "google-meet-fg",
                 "tile-bg": "tile-inactive-bg",
                 "icon-primary": "icon-inactive",
             },
-            primary_icon=icon,
+            icon=icon,
         )
         self.deck.set_key_image(self.key, tile)
 
@@ -126,14 +126,14 @@ class GoogleMeetMuteKey:
 
         icon, color = MUTE_ICON_COLOR[(self.control, muted)]
 
-        tile = await self.controller.draw_tile(
+        tile = await self.controller.renderer.draw_state_tile(
             title=self.control,
             colors={
                 "tile-fg": "google-meet-fg",
                 "tile-bg": f"{color}-bg",
                 "icon-primary": f"{color}-icon",
             },
-            primary_icon=icon,
+            icon=icon,
         )
         self.deck.set_key_image(self.key, tile)
 
@@ -254,11 +254,11 @@ class GoogleMeetActionKey:
                 "icon-primary": f"{color}-icon",
             }
 
-        tile = await self.controller.draw_tile(
+        tile = await self.controller.renderer.draw_state_tile(
             title=title,
             subtitle=subtitle,
             colors=colors,
-            primary_icon=icon,
+            icon=icon,
         )
         self.deck.set_key_image(self.key, tile)
 

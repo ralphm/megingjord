@@ -4,6 +4,7 @@ Tests for L{megingjord.ha}.
 
 import asyncio
 import logging
+import math
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -13,6 +14,9 @@ from PIL import Image
 
 from megingjord.ha import (
     SEND_DELAY_SECONDS,
+    AlarmModeScrollerItem,
+    HAAlarmDial,
+    HAAlarmTile,
     HAEntityDial,
     HAEntityTile,
     HAWebSocketClient,
@@ -166,7 +170,96 @@ class TestHAWebSocketClient:
         unsubscribe = client.subscribe("light.test", callback)
         assert callback in client.subscribers["light.test"]
         unsubscribe()
-        assert callback not in client.subscribers["light.test"]
+        assert "light.test" not in client.subscribers
+
+    def test_subscribe_keeps_other_callbacks(
+        self, ha_client: tuple[HAWebSocketClient, MagicMock]
+    ) -> None:
+        """
+        Unsubscribing one callback keeps the others.
+        """
+
+        async def callback1(state: dict | None) -> None:
+            pass
+
+        async def callback2(state: dict | None) -> None:
+            pass
+
+        client, _ = ha_client
+        unsubscribe1 = client.subscribe("light.test", callback1)
+        client.subscribe("light.test", callback2)
+        unsubscribe1()
+        assert callback2 in client.subscribers["light.test"]
+
+    @pytest.mark.asyncio
+    async def test_subscribe_dedup(
+        self, ha_client: tuple[HAWebSocketClient, MagicMock]
+    ) -> None:
+        """
+        Subscribing twice to the same entity sends one command.
+        """
+
+        async def callback(state: dict | None) -> None:
+            pass
+
+        client, mock_class = ha_client
+        mock = mock_class.return_value
+        mock.subscribe_entities = AsyncMock()
+        client._connected = True
+        client.subscribe("light.test", callback)
+        client.subscribe("light.test", callback)
+        await asyncio.sleep(0.05)
+        mock.subscribe_entities.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_subscribe_after_unsubscribe(
+        self, ha_client: tuple[HAWebSocketClient, MagicMock]
+    ) -> None:
+        """
+        Re-subscribing after unsubscribing all sends a new command and
+        releases the previous server-side subscription.
+        """
+
+        async def callback(state: dict | None) -> None:
+            pass
+
+        client, mock_class = ha_client
+        mock = mock_class.return_value
+        mock.subscribe_entities = AsyncMock()
+        client._connected = True
+        unsubscribe = client.subscribe("light.test", callback)
+        await asyncio.sleep(0.05)
+        unsubscribe()
+        client.subscribe("light.test", callback)
+        await asyncio.sleep(0.05)
+        mock.subscribe_entities.assert_awaited()
+        assert mock.subscribe_entities.await_count == 2
+        unsubscribe = mock.subscribe_entities.return_value
+        assert unsubscribe.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_subscribe_existing_state(
+        self, ha_client: tuple[HAWebSocketClient, MagicMock]
+    ) -> None:
+        """
+        Subscribing to an entity with state does not mark it missing.
+        """
+        client, mock_class = ha_client
+        mock = mock_class.return_value
+        mock.subscribe_entities = AsyncMock()
+        client.states["light.test"] = {
+            "entity_id": "light.test",
+            "state": "on",
+            "attributes": {},
+        }
+
+        async def callback(state: dict | None) -> None:
+            pass
+
+        client._connected = True
+        client.subscribe("light.test", callback)
+        await asyncio.sleep(0.05)
+        assert not client.is_missing("light.test")
 
     @pytest.mark.asyncio
     async def test_subscribe_missing(
@@ -573,7 +666,8 @@ def tile() -> HAEntityTile:
     )
     tile = HAEntityTile(0, ha, "light.test")
     tile.controller = AsyncMock()
-    tile.controller.draw_tile.return_value = b"tile"
+    tile.controller.renderer = AsyncMock()
+    tile.controller.renderer.draw_state_tile.return_value = b"tile"
     tile.deck = MagicMock()
     return tile
 
@@ -631,7 +725,7 @@ class TestHAEntityTile:
         """
         tile.ha.call_service = AsyncMock(side_effect=Exception("boom"))
         await tile.on_key_change(True)
-        tile.controller.draw_tile.assert_awaited_once()
+        tile.controller.renderer.draw_state_tile.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_on_state(self, tile: HAEntityTile) -> None:
@@ -639,7 +733,7 @@ class TestHAEntityTile:
         A state change redraws the tile.
         """
         await tile.on_state(None)
-        tile.controller.draw_tile.assert_awaited_once()
+        tile.controller.renderer.draw_state_tile.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_set_tile_disconnected(self, tile: HAEntityTile) -> None:
@@ -647,7 +741,7 @@ class TestHAEntityTile:
         Without a state, the tile shows disconnected.
         """
         await tile.set_tile()
-        tile.controller.draw_tile.assert_awaited_once_with(
+        tile.controller.renderer.draw_state_tile.assert_awaited_once_with(
             "Disconnected",
             {"icon-primary": "icon-inactive", "tile-bg": "tile-inactive-bg"},
             "cloud-question-outline",
@@ -662,7 +756,7 @@ class TestHAEntityTile:
         """
         tile.ha.is_missing.return_value = True
         await tile.set_tile()
-        tile.controller.draw_tile.assert_awaited_once_with(
+        tile.controller.renderer.draw_state_tile.assert_awaited_once_with(
             "Entity not found",
             {"icon-primary": "icon-inactive", "tile-bg": "tile-inactive-bg"},
             "alert-outline",
@@ -681,7 +775,7 @@ class TestHAEntityTile:
             "attributes": {"friendly_name": "Test Light"},
         }
         await tile.set_tile()
-        tile.controller.draw_tile.assert_awaited_once_with(
+        tile.controller.renderer.draw_state_tile.assert_awaited_once_with(
             "Test Light",
             {"icon-primary": "icon-active"},
             "lightbulb",
@@ -703,9 +797,14 @@ class TestHAEntityTile:
             },
         }
         await tile.set_tile()
-        colors = tile.controller.draw_tile.await_args.args[1]
+        colors = tile.controller.renderer.draw_state_tile.await_args.args[1]
         assert colors["icon-primary"] == "#FF0000"
-        assert tile.controller.draw_tile.await_args.kwargs["subtitle"] == "On"
+        assert (
+            tile.controller.renderer.draw_state_tile.await_args.kwargs[
+                "subtitle"
+            ]
+            == "On"
+        )
 
     @pytest.mark.asyncio
     async def test_set_tile_off(self, tile: HAEntityTile) -> None:
@@ -718,7 +817,7 @@ class TestHAEntityTile:
             "attributes": {"friendly_name": "Test Light"},
         }
         await tile.set_tile()
-        tile.controller.draw_tile.assert_awaited_once_with(
+        tile.controller.renderer.draw_state_tile.assert_awaited_once_with(
             "Test Light",
             {"icon-primary": "icon-inactive", "tile-bg": "tile-inactive-bg"},
             "lightbulb-off-outline",
@@ -737,7 +836,7 @@ class TestHAEntityTile:
             "attributes": {"friendly_name": "Test Light"},
         }
         await tile.set_tile()
-        tile.controller.draw_tile.assert_awaited_once_with(
+        tile.controller.renderer.draw_state_tile.assert_awaited_once_with(
             "Test Light",
             {"icon-primary": "icon-inactive", "tile-bg": "tile-inactive-bg"},
             "lightbulb",
@@ -770,7 +869,10 @@ def make_dial(entity_id: str, state: dict | None) -> HAEntityDial:
     )
     dial = HAEntityDial(0, ha, entity_id)
     dial.controller = AsyncMock()
-    dial.controller.draw_dial_tile.return_value = Image.new("RGBA", (140, 100))
+    dial.controller.renderer = AsyncMock()
+    dial.controller.renderer.draw_value_dial.return_value = Image.new(
+        "RGBA", (140, 100)
+    )
     dial.deck = MagicMock()
     return dial
 
@@ -795,7 +897,7 @@ class TestHAEntityDial:
         """
         await dial.start(dial.deck)
         dial.ha.subscribe.assert_called_once_with("number.test", dial.on_state)
-        dial.controller.draw_dial_tile.assert_awaited_once()
+        dial.controller.renderer.draw_value_dial.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_start_with_state(self, dial: HAEntityDial) -> None:
@@ -809,7 +911,7 @@ class TestHAEntityDial:
         }
         await dial.start(dial.deck)
         assert dial.value == 0.5
-        dial.controller.draw_dial_tile.assert_awaited_once()
+        dial.controller.renderer.draw_value_dial.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_stop(self, dial: HAEntityDial) -> None:
@@ -821,7 +923,7 @@ class TestHAEntityDial:
         await dial.start(dial.deck)
         await dial.stop()
         assert unsubscribed == [True]
-        dial.controller.render_lcd.assert_awaited_once_with(tile_changed=0)
+        dial.controller.render_lcd.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_on_state(self, dial: HAEntityDial) -> None:
@@ -835,7 +937,7 @@ class TestHAEntityDial:
         }
         await dial.on_state(state)
         assert dial.value == 0.5
-        dial.controller.render_lcd.assert_awaited_once_with(tile_changed=0)
+        dial.controller.render_lcd.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_on_state_pending(self, dial: HAEntityDial) -> None:
@@ -850,7 +952,7 @@ class TestHAEntityDial:
         }
         await dial.on_state(state)
         assert dial.value == 0.0
-        dial.controller.render_lcd.assert_awaited_once_with(tile_changed=0)
+        dial.controller.render_lcd.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_render_disconnected(self, dial: HAEntityDial) -> None:
@@ -858,7 +960,7 @@ class TestHAEntityDial:
         Without a state, the dial shows disconnected.
         """
         await dial.render()
-        dial.controller.draw_dial_tile.assert_awaited_once_with(
+        dial.controller.renderer.draw_value_dial.assert_awaited_once_with(
             title="Disconnected",
             icon="cloud-question-outline",
             value=0.0,
@@ -872,7 +974,7 @@ class TestHAEntityDial:
         """
         dial.ha.is_missing.return_value = True
         await dial.render()
-        dial.controller.draw_dial_tile.assert_awaited_once_with(
+        dial.controller.renderer.draw_value_dial.assert_awaited_once_with(
             title="Entity not found",
             icon="alert-outline",
             value=0.0,
@@ -891,7 +993,7 @@ class TestHAEntityDial:
         }
         dial.value = 0.5
         await dial.render()
-        dial.controller.draw_dial_tile.assert_awaited_once_with(
+        dial.controller.renderer.draw_value_dial.assert_awaited_once_with(
             title="Volume", icon="numeric", value=0.5, mini=False
         )
 
@@ -910,7 +1012,7 @@ class TestHAEntityDial:
         )
         dial.value = 128 / 255
         await dial.render()
-        dial.controller.draw_dial_tile.assert_awaited_once_with(
+        dial.controller.renderer.draw_value_dial.assert_awaited_once_with(
             title="Lamp", icon="lightbulb", value=128 / 255, mini=False
         )
 
@@ -932,7 +1034,7 @@ class TestHAEntityDial:
         )
         dial.value = 0.7
         await dial.render()
-        dial.controller.draw_dial_tile.assert_awaited_once_with(
+        dial.controller.renderer.draw_value_dial.assert_awaited_once_with(
             title="TV", icon="speaker", value=0.7, mini=False
         )
 
@@ -944,7 +1046,7 @@ class TestHAEntityDial:
         dial.deck = None
         image = await dial.render()
         assert isinstance(image, Image.Image)
-        dial.controller.draw_dial_tile.assert_not_called()
+        dial.controller.renderer.draw_value_dial.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_on_dial_turn(self, dial: HAEntityDial) -> None:
@@ -959,7 +1061,6 @@ class TestHAEntityDial:
         dial.ha.call_service = AsyncMock()
         await dial.on_dial_turn(1)
         assert dial.value == pytest.approx(0.01)
-        dial.controller.render_lcd.assert_awaited_once_with(tile_changed=0)
         await asyncio.sleep(SEND_DELAY_SECONDS + 0.05)
         dial.ha.call_service.assert_awaited_once()
         value = dial.ha.call_service.await_args.kwargs["data"]["value"]
@@ -993,7 +1094,6 @@ class TestHAEntityDial:
         dial.ha.call_service = AsyncMock()
         await dial.on_dial_turn(1)
         assert dial.value == pytest.approx(0.01)
-        dial.controller.render_lcd.assert_awaited_once_with(tile_changed=0)
         await asyncio.sleep(SEND_DELAY_SECONDS + 0.05)
         dial.ha.call_service.assert_not_called()
 
@@ -1249,7 +1349,6 @@ class TestHAEntityDial:
         }
         dial.ha.call_service = AsyncMock(side_effect=Exception("boom"))
         await dial.on_dial_turn(1)
-        dial.controller.render_lcd.assert_awaited_once_with(tile_changed=0)
         await asyncio.sleep(SEND_DELAY_SECONDS + 0.05)
         while dial.pending > 0:
             await asyncio.sleep(0.01)
@@ -1425,7 +1524,11 @@ class TestGetEntityIconAsync:
             return_value={"entity_id": "light.test", "platform": "hue"}
         )
         assert await client.get_entity_icon("light.test", {}) == "lightbulb"
-        mock.send_command.assert_not_called()
+        mock.send_command.assert_called_once_with(
+            "frontend/get_icons",
+            category="entity_component",
+            integration=["light"],
+        )
 
     @pytest.mark.asyncio
     async def test_unknown_entity(
@@ -1505,6 +1608,84 @@ class TestGetEntityIconAsync:
         )
         mock.send_command = AsyncMock(return_value={"resources": {}})
         assert await client.get_entity_icon("light.test", {}) == "lightbulb"
+
+    @pytest.mark.asyncio
+    async def test_component_icon(
+        self, ha_client: tuple[HAWebSocketClient, MagicMock]
+    ) -> None:
+        """
+        Component icons resolve by device class and state.
+        """
+        client, mock_class = ha_client
+        mock = mock_class.return_value
+        mock.send_command = AsyncMock(
+            return_value={
+                "resources": {
+                    "cover": {
+                        "_": {
+                            "default": "mdi:window-open",
+                            "state": {"closed": "mdi:window-closed"},
+                        },
+                        "garage": {
+                            "default": "mdi:garage-open",
+                            "state": {"closed": "mdi:garage"},
+                        },
+                    }
+                }
+            }
+        )
+        assert (
+            await client.get_entity_icon(
+                "cover.test", {"device_class": "garage"}, state="closed"
+            )
+            == "garage"
+        )
+        assert (
+            await client.get_entity_icon(
+                "cover.test", {"device_class": "garage"}
+            )
+            == "garage-open"
+        )
+        assert (
+            await client.get_entity_icon("cover.test", {}, state="closed")
+            == "window-closed"
+        )
+        assert await client.get_entity_icon("cover.test", {}) == "window-open"
+        mock.send_command.assert_awaited_once_with(
+            "frontend/get_icons",
+            category="entity_component",
+            integration=["cover"],
+        )
+
+    @pytest.mark.asyncio
+    async def test_component_icon_cached(
+        self, ha_client: tuple[HAWebSocketClient, MagicMock]
+    ) -> None:
+        """
+        Component icons are fetched once per domain.
+        """
+        client, mock_class = ha_client
+        mock = mock_class.return_value
+        mock.send_command = AsyncMock(
+            return_value={
+                "resources": {"cover": {"_": {"default": "mdi:window-open"}}}
+            }
+        )
+        assert await client.get_entity_icon("cover.a", {}) == "window-open"
+        assert await client.get_entity_icon("cover.b", {}) == "window-open"
+        mock.send_command.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_component_icon_error(
+        self, ha_client: tuple[HAWebSocketClient, MagicMock]
+    ) -> None:
+        """
+        A failed component icon lookup falls back to the domain default.
+        """
+        client, mock_class = ha_client
+        mock = mock_class.return_value
+        mock.send_command = AsyncMock(side_effect=Exception("boom"))
+        assert await client.get_entity_icon("cover.test", {}) == "window-open"
 
     @pytest.mark.asyncio
     async def test_no_client(self) -> None:
@@ -1843,3 +2024,1070 @@ class TestCallbackErrors:
             await client._notify_all()
             await asyncio.sleep(0.05)
         assert "Error in state callback" in caplog.text
+
+
+def make_alarm_tile(
+    state: dict | None, arm_service: str = "alarm_arm_night"
+) -> HAAlarmTile:
+    """
+    An alarm tile with mocked HA client, controller and deck.
+    """
+    ha = MagicMock()
+    ha.subscribe.return_value = lambda: None
+    ha.get_state.return_value = state
+    ha.is_missing.return_value = False
+    ha.get_entity_icon = AsyncMock(
+        side_effect=lambda entity_id, attributes, icon=None, state=None: (
+            get_entity_icon(entity_id, attributes, icon)
+        )
+    )
+    ha.call_service = AsyncMock()
+    tile = HAAlarmTile(
+        0, ha, "alarm_control_panel.home_alarm", arm_service=arm_service
+    )
+    tile.controller = AsyncMock()
+    tile.controller.renderer = AsyncMock()
+    tile.controller.renderer.draw_state_tile.return_value = b"tile"
+    tile.controller.renderer.draw_transition_tile.return_value = b"tile"
+    tile.controller.renderer.get_color = MagicMock(return_value="#996633")
+    tile.controller.start_key_animation = MagicMock()
+    tile.controller.stop_key_animation = MagicMock()
+    tile.deck = MagicMock()
+    return tile
+
+
+def make_alarm_dial(state: dict | None) -> HAAlarmDial:
+    """
+    An alarm dial with mocked HA client, controller and deck.
+    """
+    ha = MagicMock()
+    ha.subscribe.return_value = lambda: None
+    ha.get_state.return_value = state
+    ha.call_service = AsyncMock()
+    dial = HAAlarmDial(0, ha, "alarm_control_panel.home_alarm")
+    dial.controller = AsyncMock()
+    dial.controller.renderer = AsyncMock()
+    dial.controller.renderer.draw_selection_dial.return_value = Image.new(
+        "RGBA", (140, 100)
+    )
+    dial.controller.renderer.draw_state_dial.return_value = Image.new(
+        "RGBA", (140, 100)
+    )
+    dial.deck = MagicMock()
+    return dial
+
+
+class TestHAAlarmTile:
+    """
+    Tests for L{megingjord.ha.HAAlarmTile}.
+    """
+
+    @pytest.mark.asyncio
+    async def test_set_tile_disarmed(self) -> None:
+        """
+        A disarmed alarm shows the shield-off icon, inactive.
+        """
+        tile = make_alarm_tile(
+            {
+                "entity_id": "alarm_control_panel.home_alarm",
+                "state": "disarmed",
+                "attributes": {"friendly_name": "Home Alarm"},
+            }
+        )
+        await tile.set_tile()
+        tile.controller.renderer.draw_transition_tile.assert_awaited_once_with(
+            "Home Alarm",
+            {"icon-primary": "icon-inactive", "tile-bg": "tile-inactive-bg"},
+            "shield-off",
+            "shield-moon",
+            subtitle="Disarmed",
+            badge=None,
+        )
+
+    @pytest.mark.asyncio
+    async def test_set_tile_armed(self) -> None:
+        """
+        An armed alarm shows the state icon, active.
+        """
+        tile = make_alarm_tile(
+            {
+                "entity_id": "alarm_control_panel.home_alarm",
+                "state": "armed_home",
+                "attributes": {"friendly_name": "Home Alarm"},
+            }
+        )
+        await tile.set_tile()
+        tile.controller.renderer.draw_transition_tile.assert_awaited_once_with(
+            "Home Alarm",
+            {"icon-primary": "icon-ok"},
+            "shield-home",
+            "shield-off",
+            subtitle="Armed home",
+            badge=None,
+        )
+
+    @pytest.mark.asyncio
+    async def test_set_tile_disarming(self) -> None:
+        """
+        A disarming alarm shows the icon inactive.
+        """
+        tile = make_alarm_tile(
+            {
+                "entity_id": "alarm_control_panel.home_alarm",
+                "state": "disarming",
+                "attributes": {"friendly_name": "Home Alarm"},
+            }
+        )
+        await tile.set_tile()
+        tile.controller.renderer.draw_state_tile.assert_awaited_once_with(
+            "Home Alarm",
+            {"icon-primary": "icon-inactive", "tile-bg": "tile-inactive-bg"},
+            "shield",
+            subtitle="Disarming",
+            badge=None,
+        )
+
+    @pytest.mark.asyncio
+    async def test_set_tile_arming(self) -> None:
+        """
+        An arming alarm shows the warning icon and pulses.
+        """
+        tile = make_alarm_tile(
+            {
+                "entity_id": "alarm_control_panel.home_alarm",
+                "state": "arming",
+                "attributes": {"friendly_name": "Home Alarm"},
+            }
+        )
+        await tile.set_tile()
+        tile.controller.renderer.draw_state_tile.assert_awaited_once_with(
+            "Home Alarm",
+            {"icon-primary": "icon-warning"},
+            "shield",
+            subtitle="Arming",
+            badge=None,
+        )
+        tile.controller.start_key_animation.assert_called_once_with(
+            0, tile._render_pulse
+        )
+
+    @pytest.mark.asyncio
+    async def test_set_tile_triggered(self) -> None:
+        """
+        A triggered alarm shows the bell icon, active.
+        """
+        tile = make_alarm_tile(
+            {
+                "entity_id": "alarm_control_panel.home_alarm",
+                "state": "triggered",
+                "attributes": {"friendly_name": "Home Alarm"},
+            }
+        )
+        await tile.set_tile()
+        tile.controller.renderer.draw_state_tile.assert_awaited_once_with(
+            "Home Alarm",
+            {"icon-primary": "icon-alert"},
+            "bell-ring",
+            subtitle="Triggered",
+            badge=None,
+        )
+
+    @pytest.mark.asyncio
+    async def test_pulse_stops_on_armed(self) -> None:
+        """
+        Leaving a pulsing state stops the animation.
+        """
+        tile = make_alarm_tile(
+            {
+                "entity_id": "alarm_control_panel.home_alarm",
+                "state": "pending",
+                "attributes": {"friendly_name": "Home Alarm"},
+            }
+        )
+        await tile.set_tile()
+        tile.ha.get_state.return_value = {
+            "entity_id": "alarm_control_panel.home_alarm",
+            "state": "armed_home",
+            "attributes": {"friendly_name": "Home Alarm"},
+        }
+        await tile.set_tile()
+        tile.controller.stop_key_animation.assert_called_once_with(0)
+
+    @pytest.mark.asyncio
+    async def test_render_pulse(self) -> None:
+        """
+        The pulse renders with a modulated icon color.
+        """
+        tile = make_alarm_tile(
+            {
+                "entity_id": "alarm_control_panel.home_alarm",
+                "state": "pending",
+                "attributes": {"friendly_name": "Home Alarm"},
+            }
+        )
+        await tile.set_tile()
+        image = await tile._render_pulse(math.pi)
+        assert image == b"tile"
+        colors = tile.controller.renderer.draw_state_tile.await_args.args[1]
+        assert colors == {"icon-primary": "rgba(153, 102, 51, 1.00)"}
+
+    @pytest.mark.asyncio
+    async def test_render_pulse_reuses_frames(self) -> None:
+        """
+        The pulse reuses frames with the same alpha.
+        """
+        tile = make_alarm_tile(
+            {
+                "entity_id": "alarm_control_panel.home_alarm",
+                "state": "pending",
+                "attributes": {"friendly_name": "Home Alarm"},
+            }
+        )
+        await tile.set_tile()
+        await tile._render_pulse(math.pi)
+        await tile._render_pulse(math.pi)
+        await tile._render_pulse(math.pi)
+        assert tile.controller.renderer.draw_state_tile.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_render_pulse_frames_cleared(self) -> None:
+        """
+        Starting the pulse again clears the cached frames.
+        """
+        tile = make_alarm_tile(
+            {
+                "entity_id": "alarm_control_panel.home_alarm",
+                "state": "pending",
+                "attributes": {"friendly_name": "Home Alarm"},
+            }
+        )
+        await tile.set_tile()
+        await tile._render_pulse(math.pi)
+        count = tile.controller.renderer.draw_state_tile.await_count
+        tile._start_pulse("icon-alert")
+        await tile._render_pulse(math.pi)
+        assert (
+            tile.controller.renderer.draw_state_tile.await_count == count + 1
+        )
+
+    @pytest.mark.asyncio
+    async def test_start_pulse_no_controller(self) -> None:
+        """
+        Starting the pulse without a controller does nothing.
+        """
+        tile = make_alarm_tile(
+            {
+                "entity_id": "alarm_control_panel.home_alarm",
+                "state": "pending",
+                "attributes": {},
+            }
+        )
+        tile.controller = None
+        tile._start_pulse("icon-warning")
+
+    @pytest.mark.asyncio
+    async def test_stop_pulse_no_controller(self) -> None:
+        """
+        Stopping the pulse without a controller does nothing.
+        """
+        tile = make_alarm_tile(
+            {
+                "entity_id": "alarm_control_panel.home_alarm",
+                "state": "pending",
+                "attributes": {},
+            }
+        )
+        tile.controller = None
+        tile._stop_pulse()
+
+    def test_pulse_alpha(self) -> None:
+        """
+        The pulse alpha eases in and out between 0.25 and 1.0.
+        """
+        tile = make_alarm_tile(
+            {
+                "entity_id": "alarm_control_panel.home_alarm",
+                "state": "pending",
+                "attributes": {},
+            }
+        )
+        assert tile._pulse_alpha(0) == 0.25
+        assert tile._pulse_alpha(math.pi) == 1.0
+        assert tile._pulse_alpha(2 * math.pi) == 0.25
+        assert tile._pulse_alpha(math.pi / 2) == 0.625
+
+    @pytest.mark.asyncio
+    async def test_stop_cancels_pulse(self) -> None:
+        """
+        Stopping the tile stops the animation.
+        """
+        tile = make_alarm_tile(
+            {
+                "entity_id": "alarm_control_panel.home_alarm",
+                "state": "triggered",
+                "attributes": {"friendly_name": "Home Alarm"},
+            }
+        )
+        await tile.set_tile()
+        await tile.stop()
+        tile.controller.stop_key_animation.assert_called_once_with(0)
+
+    @pytest.mark.asyncio
+    async def test_key_arms(self) -> None:
+        """
+        Pressing a disarmed alarm arms with the configured service.
+        """
+        tile = make_alarm_tile(
+            {
+                "entity_id": "alarm_control_panel.home_alarm",
+                "state": "disarmed",
+                "attributes": {},
+            },
+            arm_service="alarm_arm_night",
+        )
+        await tile.on_key_change(True)
+        tile.ha.call_service.assert_awaited_once_with(
+            "alarm_control_panel",
+            "alarm_arm_night",
+            entity_id="alarm_control_panel.home_alarm",
+        )
+
+    @pytest.mark.asyncio
+    async def test_key_disarms(self) -> None:
+        """
+        Pressing an armed alarm disarms it.
+        """
+        tile = make_alarm_tile(
+            {
+                "entity_id": "alarm_control_panel.home_alarm",
+                "state": "armed_away",
+                "attributes": {},
+            }
+        )
+        await tile.on_key_change(True)
+        tile.ha.call_service.assert_awaited_once_with(
+            "alarm_control_panel",
+            "alarm_disarm",
+            entity_id="alarm_control_panel.home_alarm",
+        )
+
+    @pytest.mark.asyncio
+    async def test_key_arming_disarms(self) -> None:
+        """
+        Pressing an arming alarm disarms it, like the HA UI.
+        """
+        tile = make_alarm_tile(
+            {
+                "entity_id": "alarm_control_panel.home_alarm",
+                "state": "arming",
+                "attributes": {},
+            }
+        )
+        await tile.on_key_change(True)
+        tile.ha.call_service.assert_awaited_once_with(
+            "alarm_control_panel",
+            "alarm_disarm",
+            entity_id="alarm_control_panel.home_alarm",
+        )
+
+    @pytest.mark.asyncio
+    async def test_key_triggered_disarms(self) -> None:
+        """
+        Pressing a triggered alarm disarms it.
+        """
+        tile = make_alarm_tile(
+            {
+                "entity_id": "alarm_control_panel.home_alarm",
+                "state": "triggered",
+                "attributes": {},
+            }
+        )
+        await tile.on_key_change(True)
+        tile.ha.call_service.assert_awaited_once_with(
+            "alarm_control_panel",
+            "alarm_disarm",
+            entity_id="alarm_control_panel.home_alarm",
+        )
+
+    @pytest.mark.asyncio
+    async def test_key_disarming_disarms(self) -> None:
+        """
+        Pressing a disarming alarm disarms it.
+        """
+        tile = make_alarm_tile(
+            {
+                "entity_id": "alarm_control_panel.home_alarm",
+                "state": "disarming",
+                "attributes": {},
+            }
+        )
+        await tile.on_key_change(True)
+        tile.ha.call_service.assert_awaited_once_with(
+            "alarm_control_panel",
+            "alarm_disarm",
+            entity_id="alarm_control_panel.home_alarm",
+        )
+
+    @pytest.mark.asyncio
+    async def test_key_release(self) -> None:
+        """
+        Releasing the key does nothing.
+        """
+        tile = make_alarm_tile(
+            {
+                "entity_id": "alarm_control_panel.home_alarm",
+                "state": "disarmed",
+                "attributes": {},
+            }
+        )
+        await tile.on_key_change(False)
+        tile.ha.call_service.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_key_no_state(self) -> None:
+        """
+        Pressing without a state does nothing.
+        """
+        tile = make_alarm_tile(None)
+        await tile.on_key_change(True)
+        tile.ha.call_service.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_key_service_error(self) -> None:
+        """
+        A failed service call redraws the tile.
+        """
+        tile = make_alarm_tile(
+            {
+                "entity_id": "alarm_control_panel.home_alarm",
+                "state": "disarmed",
+                "attributes": {},
+            }
+        )
+        tile.ha.call_service = AsyncMock(side_effect=Exception("boom"))
+        await tile.on_key_change(True)
+        tile.controller.renderer.draw_transition_tile.assert_awaited()
+
+    @pytest.mark.asyncio
+    async def test_set_tile_no_controller(self) -> None:
+        """
+        Without a controller, nothing is drawn.
+        """
+        tile = make_alarm_tile(
+            {
+                "entity_id": "alarm_control_panel.home_alarm",
+                "state": "disarmed",
+                "attributes": {},
+            }
+        )
+        tile.controller = None
+        await tile.set_tile()
+
+    @pytest.mark.asyncio
+    async def test_set_tile_no_state(self) -> None:
+        """
+        Without a state, the tile shows disconnected.
+        """
+        tile = make_alarm_tile(None)
+        await tile.set_tile()
+        tile.controller.renderer.draw_state_tile.assert_awaited_once_with(
+            "Disconnected",
+            {"icon-primary": "icon-inactive", "tile-bg": "tile-inactive-bg"},
+            "cloud-question-outline",
+            subtitle=None,
+            badge=None,
+        )
+
+    @pytest.mark.asyncio
+    async def test_set_tile_unknown_state(self) -> None:
+        """
+        An unknown state shows the icon active.
+        """
+        tile = make_alarm_tile(
+            {
+                "entity_id": "alarm_control_panel.home_alarm",
+                "state": "unknown",
+                "attributes": {"friendly_name": "Home Alarm"},
+            }
+        )
+        await tile.set_tile()
+        tile.controller.renderer.draw_transition_tile.assert_awaited_once_with(
+            "Home Alarm",
+            {"icon-primary": "icon-active"},
+            "shield",
+            "shield-off",
+            subtitle="Unknown",
+            badge=None,
+        )
+
+    @pytest.mark.asyncio
+    async def test_set_tile_pending(self) -> None:
+        """
+        A pending alarm shows the alert icon and pulses.
+        """
+        tile = make_alarm_tile(
+            {
+                "entity_id": "alarm_control_panel.home_alarm",
+                "state": "pending",
+                "attributes": {"friendly_name": "Home Alarm"},
+            }
+        )
+        await tile.set_tile()
+        tile.controller.renderer.draw_state_tile.assert_awaited_once_with(
+            "Home Alarm",
+            {"icon-primary": "icon-warning"},
+            "shield-outline",
+            subtitle="Pending",
+            badge=None,
+        )
+        tile.controller.start_key_animation.assert_called_once_with(
+            0, tile._render_pulse
+        )
+
+    @pytest.mark.asyncio
+    async def test_set_tile_custom_icon(self) -> None:
+        """
+        A custom icon is kept over the alarm state icon.
+        """
+        tile = make_alarm_tile(
+            {
+                "entity_id": "alarm_control_panel.home_alarm",
+                "state": "armed_away",
+                "attributes": {
+                    "friendly_name": "Home Alarm",
+                    "icon": "mdi:custom",
+                },
+            }
+        )
+        await tile.set_tile()
+        tile.controller.renderer.draw_transition_tile.assert_awaited_once_with(
+            "Home Alarm",
+            {"icon-primary": "icon-ok"},
+            "custom",
+            "shield-off",
+            subtitle="Armed away",
+            badge=None,
+        )
+
+    @pytest.mark.asyncio
+    async def test_set_tile_unavailable(self) -> None:
+        """
+        An unavailable alarm shows an alert badge.
+        """
+        tile = make_alarm_tile(
+            {
+                "entity_id": "alarm_control_panel.home_alarm",
+                "state": "unavailable",
+                "attributes": {"friendly_name": "Home Alarm"},
+            }
+        )
+        await tile.set_tile()
+        tile.controller.renderer.draw_state_tile.assert_awaited_once_with(
+            "Home Alarm",
+            {"icon-primary": "icon-inactive", "tile-bg": "tile-inactive-bg"},
+            "shield",
+            subtitle="Unavailable",
+            badge="alert-circle",
+        )
+
+
+class TestAlarmModeScrollerItem:
+    """
+    Tests for L{megingjord.ha.AlarmModeScrollerItem}.
+    """
+
+    def test_known_state(self) -> None:
+        """
+        Known states use the alarm titles and icons.
+        """
+        item = AlarmModeScrollerItem("armed_away", current=True)
+        assert item.title == "Armed away"
+        assert item.icon == "shield-lock"
+        assert item.current
+
+    def test_unknown_state(self) -> None:
+        """
+        Unknown states fall back to generic title and icon.
+        """
+        item = AlarmModeScrollerItem("unavailable")
+        assert item.title == "Unavailable"
+        assert item.icon == "shield"
+        assert not item.current
+        assert item.subtitle is None
+
+
+class TestHAAlarmDial:
+    """
+    Tests for L{megingjord.ha.HAAlarmDial}.
+    """
+
+    @pytest.mark.asyncio
+    async def test_update_view(self) -> None:
+        """
+        The view lists disarmed and all supported arm modes.
+        """
+        dial = make_alarm_dial(
+            {
+                "entity_id": "alarm_control_panel.home_alarm",
+                "state": "disarmed",
+                "attributes": {"supported_features": 7},
+            }
+        )
+        await dial.update_view()
+        assert dial.current_view is not None
+        assert [item.wrapped for item in dial.current_view.items] == [
+            "disarmed",
+            "armed_home",
+            "armed_away",
+            "armed_night",
+        ]
+        assert dial.current_view.selected == 0
+
+    @pytest.mark.asyncio
+    async def test_update_view_no_state(self) -> None:
+        """
+        Without a state, only disarmed is offered.
+        """
+        dial = make_alarm_dial(None)
+        await dial.update_view()
+        assert [item.wrapped for item in dial.current_view.items] == [
+            "disarmed"
+        ]
+        assert dial.current_view.selected == 0
+
+    @pytest.mark.asyncio
+    async def test_update_view_filters_features(self) -> None:
+        """
+        Unsupported arm modes are not offered.
+        """
+        dial = make_alarm_dial(
+            {
+                "entity_id": "alarm_control_panel.home_alarm",
+                "state": "disarmed",
+                "attributes": {"supported_features": 1},
+            }
+        )
+        await dial.update_view()
+        assert [item.wrapped for item in dial.current_view.items] == [
+            "disarmed",
+            "armed_home",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_update_view_all_features(self) -> None:
+        """
+        All arm modes are offered when all features are supported.
+        """
+        dial = make_alarm_dial(
+            {
+                "entity_id": "alarm_control_panel.home_alarm",
+                "state": "disarmed",
+                "attributes": {"supported_features": 63},
+            }
+        )
+        await dial.update_view()
+        assert [item.wrapped for item in dial.current_view.items] == [
+            "disarmed",
+            "armed_home",
+            "armed_away",
+            "armed_night",
+            "armed_custom_bypass",
+            "armed_vacation",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_update_view_transient(self) -> None:
+        """
+        A transient state shows no scroller.
+        """
+        dial = make_alarm_dial(
+            {
+                "entity_id": "alarm_control_panel.home_alarm",
+                "state": "arming",
+                "attributes": {"supported_features": 7},
+            }
+        )
+        await dial.update_view()
+        assert dial.current_view is None
+        assert dial.state == "arming"
+
+    @pytest.mark.asyncio
+    async def test_on_dial_turn(self) -> None:
+        """
+        Turning the dial cycles the selection.
+        """
+        dial = make_alarm_dial(
+            {
+                "entity_id": "alarm_control_panel.home_alarm",
+                "state": "disarmed",
+                "attributes": {"supported_features": 7},
+            }
+        )
+        await dial.update_view()
+        await dial.on_dial_turn(1)
+        assert dial.current_view.selected == 1
+        await dial.on_dial_turn(-1)
+        assert dial.current_view.selected == 0
+        await dial.on_dial_turn(-1)
+        assert dial.current_view.selected == 0
+
+    @pytest.mark.asyncio
+    async def test_on_dial_turn_no_controller(self) -> None:
+        """
+        Turning without a controller does nothing.
+        """
+        dial = make_alarm_dial(
+            {
+                "entity_id": "alarm_control_panel.home_alarm",
+                "state": "disarmed",
+                "attributes": {"supported_features": 7},
+            }
+        )
+        dial.controller = None
+        await dial.on_dial_turn(1)
+
+    @pytest.mark.asyncio
+    async def test_on_dial_push_release(self) -> None:
+        """
+        Releasing the dial does nothing.
+        """
+        dial = make_alarm_dial(
+            {
+                "entity_id": "alarm_control_panel.home_alarm",
+                "state": "disarmed",
+                "attributes": {"supported_features": 7},
+            }
+        )
+        await dial.update_view()
+        await dial.on_dial_push(False)
+        dial.ha.call_service.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_on_dial_push_arms(self) -> None:
+        """
+        Pushing an arm mode arms the alarm.
+        """
+        dial = make_alarm_dial(
+            {
+                "entity_id": "alarm_control_panel.home_alarm",
+                "state": "disarmed",
+                "attributes": {"supported_features": 7},
+            }
+        )
+        await dial.update_view()
+        dial.current_view.selected = 1
+        await dial.on_dial_push(True)
+        dial.ha.call_service.assert_awaited_once_with(
+            "alarm_control_panel",
+            "alarm_arm_home",
+            entity_id="alarm_control_panel.home_alarm",
+        )
+
+    @pytest.mark.asyncio
+    async def test_on_dial_push_disarms(self) -> None:
+        """
+        Pushing disarmed disarms the alarm.
+        """
+        dial = make_alarm_dial(
+            {
+                "entity_id": "alarm_control_panel.home_alarm",
+                "state": "armed_away",
+                "attributes": {"supported_features": 7},
+            }
+        )
+        await dial.update_view()
+        dial.current_view.selected = 0
+        await dial.on_dial_push(True)
+        dial.ha.call_service.assert_awaited_once_with(
+            "alarm_control_panel",
+            "alarm_disarm",
+            entity_id="alarm_control_panel.home_alarm",
+        )
+
+    @pytest.mark.asyncio
+    async def test_on_dial_push_service_error(self) -> None:
+        """
+        A failed service call is logged, not raised.
+        """
+        dial = make_alarm_dial(
+            {
+                "entity_id": "alarm_control_panel.home_alarm",
+                "state": "disarmed",
+                "attributes": {"supported_features": 7},
+            }
+        )
+        dial.ha.call_service = AsyncMock(side_effect=Exception("boom"))
+        await dial.update_view()
+        dial.current_view.selected = 1
+        await dial.on_dial_push(True)
+
+    @pytest.mark.asyncio
+    async def test_on_dial_push_code_required(self) -> None:
+        """
+        Arming an alarm that requires a code does nothing.
+        """
+        dial = make_alarm_dial(
+            {
+                "entity_id": "alarm_control_panel.home_alarm",
+                "state": "disarmed",
+                "attributes": {
+                    "supported_features": 7,
+                    "code_arm_required": True,
+                },
+            }
+        )
+        await dial.update_view()
+        dial.current_view.selected = 1
+        await dial.on_dial_push(True)
+        dial.ha.call_service.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_on_state_no_controller(self) -> None:
+        """
+        A state change without a controller only updates the view.
+        """
+        dial = make_alarm_dial(
+            {
+                "entity_id": "alarm_control_panel.home_alarm",
+                "state": "disarmed",
+                "attributes": {"supported_features": 7},
+            }
+        )
+        dial.controller = None
+        dial.ha.get_state.return_value = {
+            "entity_id": "alarm_control_panel.home_alarm",
+            "state": "armed_away",
+            "attributes": {"supported_features": 7},
+        }
+        await dial.on_state(dial.ha.get_state.return_value)
+        assert dial.current_view.selected == 2
+
+    @pytest.mark.asyncio
+    async def test_on_state(self) -> None:
+        """
+        A state change rebuilds the view.
+        """
+        dial = make_alarm_dial(
+            {
+                "entity_id": "alarm_control_panel.home_alarm",
+                "state": "disarmed",
+                "attributes": {"supported_features": 7},
+            }
+        )
+        await dial.update_view()
+        dial.ha.get_state.return_value = {
+            "entity_id": "alarm_control_panel.home_alarm",
+            "state": "armed_away",
+            "attributes": {"supported_features": 7},
+        }
+        await dial.on_state(dial.ha.get_state.return_value)
+        assert dial.current_view.selected == 2
+        assert dial.current_view.selected_item.current
+        dial.controller.render_lcd.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_render(self) -> None:
+        """
+        Rendering draws the scroller view.
+        """
+        dial = make_alarm_dial(
+            {
+                "entity_id": "alarm_control_panel.home_alarm",
+                "state": "disarmed",
+                "attributes": {"supported_features": 7},
+            }
+        )
+        await dial.update_view()
+        await dial.render()
+        dial.controller.renderer.draw_selection_dial.assert_awaited_once_with(
+            dial.current_view, mini=False
+        )
+
+    @pytest.mark.asyncio
+    async def test_render_no_controller(self) -> None:
+        """
+        Rendering without a controller returns a blank image.
+        """
+        dial = make_alarm_dial(
+            {
+                "entity_id": "alarm_control_panel.home_alarm",
+                "state": "disarmed",
+                "attributes": {"supported_features": 7},
+            }
+        )
+        dial.controller = None
+        image = await dial.render()
+        assert image.size == (140, 100)
+
+    @pytest.mark.asyncio
+    async def test_render_transient(self) -> None:
+        """
+        A transient state renders a static state tile.
+        """
+        dial = make_alarm_dial(
+            {
+                "entity_id": "alarm_control_panel.home_alarm",
+                "state": "triggered",
+                "attributes": {
+                    "friendly_name": "Home Alarm",
+                    "supported_features": 7,
+                },
+            }
+        )
+        await dial.update_view()
+        await dial.render()
+        dial.controller.renderer.draw_state_dial.assert_awaited_once_with(
+            "Home Alarm",
+            "Triggered",
+            "bell-ring",
+            mini=False,
+            colors={"dial-icon": "icon-alert"},
+        )
+
+    @pytest.mark.asyncio
+    async def test_render_transient_mini(self) -> None:
+        """
+        A transient state renders the mini state tile.
+        """
+        dial = make_alarm_dial(
+            {
+                "entity_id": "alarm_control_panel.home_alarm",
+                "state": "arming",
+                "attributes": {
+                    "friendly_name": "Home Alarm",
+                    "supported_features": 7,
+                },
+            }
+        )
+        await dial.update_view()
+        await dial.render(mini=True)
+        dial.controller.renderer.draw_state_dial.assert_awaited_once_with(
+            "Home Alarm",
+            "Arming",
+            "shield",
+            mini=True,
+            colors={"dial-icon": "icon-warning"},
+        )
+
+    @pytest.mark.asyncio
+    async def test_render_transient_no_state(self) -> None:
+        """
+        A transient state without a state object falls back to the
+        entity id as title.
+        """
+        dial = make_alarm_dial(None)
+        dial.state = "pending"
+        await dial.render()
+        dial.controller.renderer.draw_state_dial.assert_awaited_once_with(
+            "alarm_control_panel.home_alarm",
+            "Pending",
+            "shield-outline",
+            mini=False,
+            colors={"dial-icon": "icon-warning"},
+        )
+
+    @pytest.mark.asyncio
+    async def test_on_dial_push_no_view(self) -> None:
+        """
+        Pushing before the first view update does nothing.
+        """
+        dial = make_alarm_dial(
+            {
+                "entity_id": "alarm_control_panel.home_alarm",
+                "state": "disarmed",
+                "attributes": {"supported_features": 7},
+            }
+        )
+        await dial.on_dial_push(True)
+        dial.ha.call_service.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_render_no_view(self) -> None:
+        """
+        Rendering before the first view update returns a blank image.
+        """
+        dial = make_alarm_dial(
+            {
+                "entity_id": "alarm_control_panel.home_alarm",
+                "state": "disarmed",
+                "attributes": {"supported_features": 7},
+            }
+        )
+        image = await dial.render()
+        assert image.size == (140, 100)
+
+    @pytest.mark.asyncio
+    async def test_on_dial_push_transient_disarms(self) -> None:
+        """
+        Pushing the dial in a transient state disarms.
+        """
+        dial = make_alarm_dial(
+            {
+                "entity_id": "alarm_control_panel.home_alarm",
+                "state": "arming",
+                "attributes": {"supported_features": 7},
+            }
+        )
+        await dial.update_view()
+        await dial.on_dial_push(True)
+        dial.ha.call_service.assert_awaited_once_with(
+            "alarm_control_panel",
+            "alarm_disarm",
+            entity_id="alarm_control_panel.home_alarm",
+        )
+
+    @pytest.mark.asyncio
+    async def test_start(self) -> None:
+        """
+        Starting subscribes and renders the initial view.
+        """
+        dial = make_alarm_dial(
+            {
+                "entity_id": "alarm_control_panel.home_alarm",
+                "state": "disarmed",
+                "attributes": {"supported_features": 7},
+            }
+        )
+        await dial.start(MagicMock())
+        dial.ha.subscribe.assert_called_once_with(
+            "alarm_control_panel.home_alarm", dial.on_state
+        )
+        dial.controller.renderer.draw_selection_dial.assert_awaited_once_with(
+            dial.current_view, mini=False
+        )
+
+    @pytest.mark.asyncio
+    async def test_stop(self) -> None:
+        """
+        Stopping unsubscribes and redraws the tile.
+        """
+        dial = make_alarm_dial(
+            {
+                "entity_id": "alarm_control_panel.home_alarm",
+                "state": "disarmed",
+                "attributes": {"supported_features": 7},
+            }
+        )
+        dial.ha.subscribe.return_value = MagicMock()
+        await dial.start(MagicMock())
+        await dial.stop()
+        dial.ha.subscribe.return_value.assert_called_once_with()
+        dial.controller.render_lcd.assert_awaited_with()
+
+    @pytest.mark.asyncio
+    async def test_stop_no_controller(self) -> None:
+        """
+        Stopping without a controller only unsubscribes.
+        """
+        dial = make_alarm_dial(
+            {
+                "entity_id": "alarm_control_panel.home_alarm",
+                "state": "disarmed",
+                "attributes": {"supported_features": 7},
+            }
+        )
+        dial.ha.subscribe.return_value = MagicMock()
+        await dial.start(MagicMock())
+        dial.controller = None
+        await dial.stop()
+        dial.ha.subscribe.return_value.assert_called_once_with()

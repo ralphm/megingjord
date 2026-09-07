@@ -181,6 +181,7 @@ class PulseOutputScrollerItem(ScrollerItem):
     """
 
     wrapped: PulseOutput
+    color: str | None = None
 
     @property
     def title(self) -> str:
@@ -297,6 +298,7 @@ class PulseInputScrollerItem(ScrollerItem):
     """
 
     wrapped: PulseInput
+    color: str | None = None
 
     @property
     def title(self) -> str:
@@ -755,7 +757,7 @@ class PulseDefaultSinkKey:
             primary_icon = "help-rhombus-outline"
             secondary_icon = None
 
-        tile = await self.controller.draw_tile(
+        tile = await self.controller.renderer.draw_transition_tile(
             title=title,
             primary_icon=primary_icon,
             secondary_icon=secondary_icon,
@@ -792,7 +794,7 @@ class PulseDefaultSinkDial:
         """
 
         if self.controller is not None:
-            await self.controller.render_lcd(tile_changed=self.dial)
+            await self.controller.render_lcd()
 
     async def on_sink(self, sink_name: str) -> None:
         """
@@ -805,7 +807,7 @@ class PulseDefaultSinkDial:
 
         self.current_view = await self.scroller_view_from_default_output()
 
-        await self.controller.render_lcd(tile_changed=self.dial)
+        await self.controller.render_lcd()
 
     async def on_dial_push(self, dial_state: bool) -> None:
         """
@@ -839,17 +841,7 @@ class PulseDefaultSinkDial:
         if not self.current_view:
             return None
 
-        if value < 0:
-            self.current_view.selected = max(
-                0, self.current_view.selected + value
-            )
-        else:
-            self.current_view.selected = min(
-                len(self.current_view.items) - 1,
-                self.current_view.selected + value,
-            )
-
-        await self.controller.render_lcd(tile_changed=self.dial)
+        self.current_view.turn(value)
 
     async def scroller_view_from_default_output(self) -> ScrollerView | None:
         """
@@ -884,7 +876,7 @@ class PulseDefaultSinkDial:
         if not self.pulse.pulse or not self.controller or view is None:
             return Image.new("RGBA", (140, 100), "#00000000")
 
-        image = await self.controller.draw_dial_tile_scroller(
+        image = await self.controller.renderer.draw_selection_dial(
             view=view,
             mini=mini,
         )
@@ -971,7 +963,7 @@ class PulseDefaultSourceKey:
             primary_icon = "help-rhombus-outline"
             secondary_icon = None
 
-        tile = await self.controller.draw_tile(
+        tile = await self.controller.renderer.draw_transition_tile(
             title=title,
             primary_icon=primary_icon,
             secondary_icon=secondary_icon,
@@ -1007,7 +999,7 @@ class PulseDefaultSourceDial:
         Stop the dial.
         """
         if self.controller is not None:
-            await self.controller.render_lcd(tile_changed=self.dial)
+            await self.controller.render_lcd()
 
     async def on_source(self, source_name: str) -> None:
         """
@@ -1020,7 +1012,7 @@ class PulseDefaultSourceDial:
 
         self.current_view = await self.scroller_view_from_default_source()
 
-        await self.controller.render_lcd(tile_changed=self.dial)
+        await self.controller.render_lcd()
 
     async def on_dial_push(self, dial_state: bool) -> None:
         """
@@ -1054,17 +1046,7 @@ class PulseDefaultSourceDial:
         if not self.current_view:
             return None
 
-        if value < 0:
-            self.current_view.selected = max(
-                0, self.current_view.selected + value
-            )
-        else:
-            self.current_view.selected = min(
-                len(self.current_view.items) - 1,
-                self.current_view.selected + value,
-            )
-
-        await self.controller.render_lcd(tile_changed=self.dial)
+        self.current_view.turn(value)
 
     async def scroller_view_from_default_source(self) -> ScrollerView | None:
         """
@@ -1098,7 +1080,7 @@ class PulseDefaultSourceDial:
         if not self.pulse.pulse or not self.controller or view is None:
             return Image.new("RGBA", (140, 100), "#00000000")
 
-        image = await self.controller.draw_dial_tile_scroller(
+        image = await self.controller.renderer.draw_selection_dial(
             view=view,
             mini=mini,
         )

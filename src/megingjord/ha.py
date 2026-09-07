@@ -4,6 +4,8 @@
 Home Assistant support.
 """
 
+# pylint: disable=too-many-lines
+
 from __future__ import annotations
 
 import asyncio
@@ -247,6 +249,8 @@ class HAWebSocketClient:
     state caching and per-entity subscriptions.
     """
 
+    # pylint: disable=R0902
+
     app: web.Application
     url: str
     token: str
@@ -268,6 +272,9 @@ class HAWebSocketClient:
         str, set[Callable[[dict[str, Any] | None], Coroutine[Any, Any, None]]]
     ] = field(init=False, factory=dict)
     subscribed: set[str] = field(init=False, factory=set)
+    subscriptions: dict[str, Callable[[], None]] = field(
+        init=False, factory=dict
+    )
     tasks: set[asyncio.Task[None]] = field(init=False, factory=set)
     task: asyncio.Task[None] | None = field(init=False, default=None)
     _connected: bool = field(init=False, default=False)
@@ -327,10 +334,8 @@ class HAWebSocketClient:
         listener = asyncio.create_task(self.client.start_listening())
         try:
             for entity_id in self.subscribers:
-                await self.client.subscribe_entities(
-                    self._on_entity_event, [entity_id]
-                )
                 self.subscribed.add(entity_id)
+                await self._subscribe_entity_async(entity_id)
             await listener
         finally:
             if not listener.done():
@@ -341,6 +346,7 @@ class HAWebSocketClient:
             self.states = {}
             self.missing.clear()
             self.subscribed.clear()
+            self.subscriptions.clear()
             self.registry_entries.clear()
             self.platform_icons.clear()
             self.component_icons.clear()
@@ -526,6 +532,8 @@ class HAWebSocketClient:
             subscribers.discard(callback)
             if not subscribers:
                 self.subscribers.pop(entity_id, None)
+                self.subscribed.discard(entity_id)
+                self._unsubscribe_entity(entity_id)
 
         return unsubscribe
 
@@ -548,12 +556,26 @@ class HAWebSocketClient:
         entity without a state after subscribing does not exist.
         """
         assert self.client is not None
-        await self.client.subscribe_entities(
+        unsubscribe = await self.client.subscribe_entities(
             self._on_entity_event, [entity_id]
         )
+        if entity_id not in self.subscribed:
+            # All subscribers left while subscribing; release the
+            # server-side subscription again.
+            unsubscribe()
+            return
+        self.subscriptions[entity_id] = unsubscribe
         if entity_id not in self.states:
             self.missing.add(entity_id)
             self._notify(entity_id, None)
+
+    def _unsubscribe_entity(self, entity_id: str) -> None:
+        """
+        Release the server-side subscription for an entity.
+        """
+        unsubscribe = self.subscriptions.pop(entity_id, None)
+        if unsubscribe is not None:
+            unsubscribe()
 
     def _on_subscribe_done(
         self, entity_id: str, task: asyncio.Task[Any]
@@ -980,6 +1002,8 @@ class HAEntityDial:
         """
         Get the current value as a fraction of the range.
         """
+
+        # pylint: disable=R0911
         domain = self.entity_id.split(".")[0]
         attributes = state.get("attributes", {})
 
@@ -1206,12 +1230,12 @@ class HAAlarmTile(HAEntityTile):
         """
         The icon alpha for the given pulse phase, with ease-in-out.
         """
-        t = (phase % (2 * math.pi)) / (2 * math.pi)
-        if t < 0.5:
-            x = t * 2
+        progress = (phase % (2 * math.pi)) / (2 * math.pi)
+        if progress < 0.5:
+            step = progress * 2
         else:
-            x = (1 - t) * 2
-        eased = x * x * (3 - 2 * x)
+            step = (1 - progress) * 2
+        eased = step * step * (3 - 2 * step)
         return 0.25 + 0.75 * eased
 
     async def stop(self) -> None:
@@ -1281,7 +1305,7 @@ class HAAlarmDial:
         if self.controller is not None:
             await self.controller.render_lcd(tile_changed=self.dial)
 
-    async def on_state(self, state: dict[str, Any] | None) -> None:
+    async def on_state(self, _state: dict[str, Any] | None) -> None:
         """
         The alarm state changed.
         """
@@ -1330,16 +1354,7 @@ class HAAlarmDial:
         if not self.controller or not self.current_view:
             return
 
-        if value < 0:
-            self.current_view.selected = max(
-                0, self.current_view.selected + value
-            )
-        else:
-            self.current_view.selected = min(
-                len(self.current_view.items) - 1,
-                self.current_view.selected + value,
-            )
-
+        self.current_view.turn(value)
         await self.controller.render_lcd(tile_changed=self.dial)
 
     async def on_dial_push(self, dial_state: bool) -> None:

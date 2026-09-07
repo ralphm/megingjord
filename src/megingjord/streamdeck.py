@@ -158,6 +158,15 @@ class ScrollerView:
     items: Sequence[ScrollerItem] = field()
     selected: int = 0
 
+    def turn(self, value: int) -> None:
+        """
+        Move the selection by the given amount, clamped to the items.
+        """
+        if value < 0:
+            self.selected = max(0, self.selected + value)
+        else:
+            self.selected = min(len(self.items) - 1, self.selected + value)
+
     @items.validator
     def _check_items(
         self,
@@ -180,6 +189,8 @@ class DeckController:
     """
     Stream Deck controller
     """
+
+    # pylint: disable=R0904
 
     app: web.Application
     deck: StreamDeck = field(init=False, default=None)

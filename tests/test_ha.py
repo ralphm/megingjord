@@ -216,7 +216,8 @@ class TestHAWebSocketClient:
         self, ha_client: tuple[HAWebSocketClient, MagicMock]
     ) -> None:
         """
-        Re-subscribing after unsubscribing all sends no new command.
+        Re-subscribing after unsubscribing all sends a new command and
+        releases the previous server-side subscription.
         """
 
         async def callback(state: dict | None) -> None:
@@ -231,7 +232,10 @@ class TestHAWebSocketClient:
         unsubscribe()
         client.subscribe("light.test", callback)
         await asyncio.sleep(0.05)
-        mock.subscribe_entities.assert_awaited_once()
+        mock.subscribe_entities.assert_awaited()
+        assert mock.subscribe_entities.await_count == 2
+        unsubscribe = mock.subscribe_entities.return_value
+        assert unsubscribe.call_count == 1
 
     @pytest.mark.asyncio
     async def test_subscribe_existing_state(

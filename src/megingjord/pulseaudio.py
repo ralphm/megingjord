@@ -839,16 +839,7 @@ class PulseDefaultSinkDial:
         if not self.current_view:
             return None
 
-        if value < 0:
-            self.current_view.selected = max(
-                0, self.current_view.selected + value
-            )
-        else:
-            self.current_view.selected = min(
-                len(self.current_view.items) - 1,
-                self.current_view.selected + value,
-            )
-
+        self.current_view.turn(value)
         await self.controller.render_lcd(tile_changed=self.dial)
 
     async def scroller_view_from_default_output(self) -> ScrollerView | None:
@@ -1054,16 +1045,7 @@ class PulseDefaultSourceDial:
         if not self.current_view:
             return None
 
-        if value < 0:
-            self.current_view.selected = max(
-                0, self.current_view.selected + value
-            )
-        else:
-            self.current_view.selected = min(
-                len(self.current_view.items) - 1,
-                self.current_view.selected + value,
-            )
-
+        self.current_view.turn(value)
         await self.controller.render_lcd(tile_changed=self.dial)
 
     async def scroller_view_from_default_source(self) -> ScrollerView | None:

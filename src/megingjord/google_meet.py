@@ -234,6 +234,9 @@ class GoogleMeetActionKey:
 
         _event, title, icon, color = ACTION_KEYS[self.control]
 
+        if self.control == "home" and self.meet.phase == "green room":
+            color = "google-meet-secondary"
+
         if self.title:
             title = self.title
 

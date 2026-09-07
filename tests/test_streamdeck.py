@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from aiohttp import web
+from PIL import Image
 
 from megingjord.color_utils import get_colors
 from megingjord.icon import get_icon, svg_icon
@@ -35,6 +36,12 @@ def make_controller() -> DeckController:
     app["colors"] = get_colors("default")
     controller = DeckController(app)
     controller.deck = MagicMock()
+    controller.deck.touchscreen_image_format.return_value = {
+        "format": "JPEG",
+        "size": (800, 100),
+        "rotation": 0,
+        "flip": (False, False),
+    }
     return controller
 
 
@@ -311,6 +318,12 @@ class FakeDial:
         self.on_dial_push = AsyncMock()
         self.on_dial_turn = AsyncMock()
 
+    async def render(self, mini: bool = False) -> Image.Image:
+        """
+        Render a tile.
+        """
+        return Image.new("RGBA", (220, 100))
+
 
 class TestOnDialChange:
     """
@@ -330,6 +343,7 @@ class TestOnDialChange:
         )
         assert controller.status_inhibited > 0
         dial.on_dial_turn.assert_awaited_once_with(5)
+        controller.deck.set_touchscreen_image.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_push_inhibits(self) -> None:
@@ -344,6 +358,7 @@ class TestOnDialChange:
         )
         assert controller.status_inhibited > 0
         dial.on_dial_push.assert_awaited_once_with(True)
+        controller.deck.set_touchscreen_image.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_release_inhibits(self) -> None:
@@ -358,6 +373,7 @@ class TestOnDialChange:
         )
         assert controller.status_inhibited > 0
         dial.on_dial_push.assert_awaited_once_with(False)
+        controller.deck.set_touchscreen_image.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_other_dials_do_not_inhibit(self) -> None:
@@ -376,6 +392,7 @@ class TestOnDialChange:
         )
         assert controller.status_inhibited == 0
         assert dial.on_dial_turn.await_count == 2
+        assert controller.deck.set_touchscreen_image.call_count == 2
 
     @pytest.mark.asyncio
     async def test_unknown_dial_ignored(self) -> None:
@@ -390,6 +407,7 @@ class TestOnDialChange:
         )
         assert controller.status_inhibited == 0
         dial.on_dial_turn.assert_not_called()
+        controller.deck.set_touchscreen_image.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_handler_error_logged(self) -> None:
@@ -403,6 +421,7 @@ class TestOnDialChange:
         await controller.on_dial_change(
             controller.deck, 1, DialEventType.TURN, 5
         )
+        controller.deck.set_touchscreen_image.assert_called_once()
 
 
 class TestKeyAnimation:

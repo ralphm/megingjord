@@ -315,6 +315,8 @@ class DeckController:
         except Exception:  # pylint: disable=W0718
             logger.error("Failed to process dial change", exc_info=True)
 
+        await self.render_lcd()
+
     async def listen(self) -> None:
         """
         Find a Stream Deck, open and initialize.
@@ -506,12 +508,10 @@ class BrightnessDial:
         )
         return image
 
-    async def on_dial_push(self, dial_state: bool) -> None:
+    async def on_dial_push(self, _dial_state: bool) -> None:
         """
         Called when the dial got pressed or released.
         """
-        if dial_state and self.controller:
-            await self.controller.render_lcd()
 
     async def on_dial_turn(self, value: int) -> None:
         """
@@ -522,7 +522,6 @@ class BrightnessDial:
 
         change = round(value / abs(value) * (1.6 ** abs(value) - 1))
         self.controller.set_brightness(self.deck.brightness + change)
-        await self.controller.render_lcd()
 
 
 def create_touchscreen_tile_image(_deck: StreamDeck) -> Image.Image:

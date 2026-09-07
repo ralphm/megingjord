@@ -959,12 +959,10 @@ class HAEntityDial:
             title=title, icon=icon, value=value, mini=mini
         )
 
-    async def on_dial_push(self, dial_state: bool) -> None:
+    async def on_dial_push(self, _dial_state: bool) -> None:
         """
         Called when the dial got pressed or released.
         """
-        if dial_state and self.controller:
-            await self.controller.render_lcd()
 
     async def on_dial_turn(self, value: int) -> None:
         """
@@ -975,7 +973,6 @@ class HAEntityDial:
 
         change = round(value / abs(value) * (1.6 ** abs(value) - 1))
         self.value = min(max(self.value + change / 100.0, 0.0), 1.0)
-        await self.controller.render_lcd()
         self._schedule_send()
 
     def _schedule_send(self) -> None:
@@ -1409,7 +1406,6 @@ class HAAlarmDial:
             return
 
         self.current_view.turn(value)
-        await self.controller.render_lcd()
 
     async def on_dial_push(self, dial_state: bool) -> None:
         """
@@ -1417,8 +1413,6 @@ class HAAlarmDial:
         """
         if not dial_state or not self.controller:
             return
-
-        await self.controller.render_lcd()
 
         if self.state in ALARM_TRANSIENT:
             service = "alarm_disarm"

@@ -1084,6 +1084,8 @@ class HAAlarmTile(HAEntityTile):
     Stream Deck key for arming and disarming an alarm control panel.
     """
 
+    # pylint: disable=R0902
+
     arm_service: str = field(kw_only=True)
 
     _pulse_text: str = field(init=False, default="")
@@ -1128,6 +1130,8 @@ class HAAlarmTile(HAEntityTile):
         Stable states show a transition tile with the target state;
         transient and unavailable states show a state tile.
         """
+
+        # pylint: disable=R0912,R0915
         if not self.controller or not self.deck:
             return
 

@@ -185,7 +185,7 @@ class DeckController:
     Stream Deck controller
     """
 
-    # pylint: disable=R0904
+    # pylint: disable=R0902,R0904
 
     app: web.Application
     renderer: Renderer = field(init=False)

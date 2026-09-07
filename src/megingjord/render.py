@@ -38,7 +38,7 @@ def wrap_text(title: str, width: int, max_lines: int) -> list[str]:
     return lines
 
 
-def draw_text(
+def draw_text(  # pylint: disable=R0913
     draw: ImageDraw.ImageDraw,
     text: str,
     pos: tuple[float, float],
@@ -84,7 +84,7 @@ class Renderer:
         svg = await svg_icon(icon=icon, color=color, size=size)
         return svg_to_image(svg, width=size, height=size)
 
-    async def _draw_icon_at(
+    async def _draw_icon_at(  # pylint: disable=R0913
         self,
         image: Image.Image,
         icon: str,
@@ -98,41 +98,7 @@ class Renderer:
         icon_image = await self.draw_icon(icon, color, size)
         image.alpha_composite(icon_image, pos)
 
-    async def draw_state_tile(
-        self,
-        title: str,
-        colors: dict[str, str] | None = None,  # color overrides
-        icon: str | None = None,
-        subtitle: str | None = None,
-        badge: str | None = None,
-    ) -> bytes:
-        """
-        Draw a key tile showing the current state.
-        """
-        return await self._draw_tile(
-            title, colors, icon, None, subtitle, badge
-        )
-
-    async def draw_transition_tile(
-        self,
-        title: str,
-        colors: dict[str, str] | None = None,  # color overrides
-        primary_icon: str | None = None,
-        secondary_icon: str | None = None,
-        subtitle: str | None = None,
-        badge: str | None = None,
-    ) -> bytes:
-        """
-        Draw a key tile showing the current state and the target state.
-
-        The primary icon shows the current state, the smaller secondary icon
-        the state that pressing the key will go to.
-        """
-        return await self._draw_tile(
-            title, colors, primary_icon, secondary_icon, subtitle, badge
-        )
-
-    async def _draw_tile(
+    async def _draw_tile(  # pylint: disable=R0913
         self,
         title: str,
         colors: dict[str, str] | None,
@@ -146,7 +112,7 @@ class Renderer:
 
         If there's only a primary icon, it will be rendered large and centered.
         If there's a secondary icon, the primary icon is rendered to the lower
-        right, overlapping the smaller icon to the upper left. A badge is
+        left, overlapping the smaller icon to the upper right. A badge is
         rendered as a small icon in the top right corner.
         """
         image = Image.new("RGBA", (120, 120))
@@ -203,22 +169,138 @@ class Renderer:
             image.convert("RGB").save(jpg, format="JPEG", quality=95)
             return jpg.getvalue()
 
-    async def draw_state_dial(
+    async def draw_state_tile(  # pylint: disable=R0913
         self,
         title: str,
-        state: str,
+        colors: dict[str, str] | None = None,  # color overrides
+        icon: str | None = None,
+        subtitle: str | None = None,
+        badge: str | None = None,
+    ) -> bytes:
+        """
+        Draw a key tile showing the current state.
+        """
+        return await self._draw_tile(
+            title, colors, icon, None, subtitle, badge
+        )
+
+    async def draw_transition_tile(  # pylint: disable=R0913
+        self,
+        title: str,
+        colors: dict[str, str] | None = None,  # color overrides
+        primary_icon: str | None = None,
+        secondary_icon: str | None = None,
+        subtitle: str | None = None,
+        badge: str | None = None,
+    ) -> bytes:
+        """
+        Draw a key tile showing the current state and the target state.
+
+        The primary icon shows the current state, the smaller secondary icon
+        the state that pressing the key will go to.
+        """
+        return await self._draw_tile(
+            title, colors, primary_icon, secondary_icon, subtitle, badge
+        )
+
+    async def _draw_dial(  # pylint: disable=R0913,R0914
+        self,
+        title: str,
         icon: str,
-        mini: bool = False,
+        label: str,
+        mini: bool,
+        anchor: str = "ld",
+        value: float | None = None,
         colors: dict[str, str] | None = None,
     ) -> Image.Image:
         """
-        Draw a dial tile for a state, without a meter.
-
-        The layout matches the value dial: an icon, a title, and the
-        state name in the bar label position.
+        Draw a dial tile: an icon, a title, a bar label, and an
+        optional meter bar.
         """
+        image = Image.new("RGBA", DIAL_TILE_SIZE, "#00000000")
+
+        draw = ImageDraw.Draw(image)
+
+        margin_left = margin_right = 10
+        margin_top = margin_bottom = 2
+        icon_size = 40
+
+        await self._draw_icon_at(
+            image,
+            icon,
+            self.get_color("dial-icon", overrides=colors),
+            icon_size,
+            (margin_left, round(image.height / 2.0 + 5)),
+        )
+
+        if not mini:
+            lines = wrap_text(title, width=12, max_lines=2)
+            text = "\n".join(lines)
+            draw_text(
+                draw,
+                text,
+                (margin_left, margin_top),
+                18,
+                "la",
+                self.get_color("dial-title"),
+            )
+
+        meter_middle = image.height / 4.0 * 3.0
+        meter_left = margin_left + icon_size + margin_left
+        meter_right = image.width - margin_right - 1
+
+        label_x = meter_right if anchor.startswith("r") else meter_left
+        draw_text(
+            draw,
+            textwrap.shorten(label, width=12, placeholder="\u2026"),
+            (label_x, meter_middle - margin_bottom),
+            14,
+            anchor,
+            self.get_color("dial-bar-label"),
+        )
+
+        if value is not None:
+            bar_top = meter_middle + margin_top
+            bar_bottom = bar_top + 5
+
+            draw.rounded_rectangle(
+                (meter_left, bar_top, meter_right, bar_bottom),
+                radius=3,
+                fill=self.get_color("dial-bar-bg"),
+            )
+
+            if value:
+                draw.rounded_rectangle(
+                    (
+                        meter_left,
+                        bar_top,
+                        round(value * (meter_right - meter_left) + meter_left),
+                        bar_bottom,
+                    ),
+                    radius=3,
+                    fill=self.get_color("dial-bar-fill"),
+                )
+
+        return image
+
+    async def draw_value_dial(
+        self,
+        title: str,
+        icon: str,
+        value: float,
+        mini: bool = False,
+    ) -> Image.Image:
+        """
+        Draw a dial tile with a meter for a numeric value.
+        """
+        if mini:
+            label = textwrap.shorten(title, width=12, placeholder="\u2026")
+            anchor = "ld"
+        else:
+            label = f"{round(100*value):3d}%"
+            anchor = "rd"
         return await self._draw_dial(
-            title, icon, state, mini, anchor="ld", colors=colors
+            title, icon, label, mini, anchor=anchor, value=value
         )
 
     async def draw_selection_dial(
@@ -319,104 +401,22 @@ class Renderer:
 
         return image
 
-    async def _draw_dial(
+    async def draw_state_dial(  # pylint: disable=R0913
         self,
         title: str,
+        state: str,
         icon: str,
-        label: str,
-        mini: bool,
-        anchor: str = "ld",
-        value: float | None = None,
+        mini: bool = False,
         colors: dict[str, str] | None = None,
     ) -> Image.Image:
         """
-        Draw a dial tile: an icon, a title, a bar label, and an
-        optional meter bar.
+        Draw a dial tile for a state, without a meter.
+
+        The layout matches the value dial: an icon, a title, and the
+        state name in the bar label position.
         """
-        image = Image.new("RGBA", DIAL_TILE_SIZE, "#00000000")
-
-        draw = ImageDraw.Draw(image)
-
-        margin_left = margin_right = 10
-        margin_top = margin_bottom = 2
-        icon_size = 40
-
-        await self._draw_icon_at(
-            image,
-            icon,
-            self.get_color("dial-icon", overrides=colors),
-            icon_size,
-            (margin_left, round(image.height / 2.0 + 5)),
-        )
-
-        if not mini:
-            lines = wrap_text(title, width=12, max_lines=2)
-            text = "\n".join(lines)
-            draw_text(
-                draw,
-                text,
-                (margin_left, margin_top),
-                18,
-                "la",
-                self.get_color("dial-title"),
-            )
-
-        meter_middle = image.height / 4.0 * 3.0
-        meter_left = margin_left + icon_size + margin_left
-        meter_right = image.width - margin_right - 1
-
-        label_x = meter_right if anchor.startswith("r") else meter_left
-        draw_text(
-            draw,
-            textwrap.shorten(label, width=12, placeholder="\u2026"),
-            (label_x, meter_middle - margin_bottom),
-            14,
-            anchor,
-            self.get_color("dial-bar-label"),
-        )
-
-        if value is not None:
-            bar_top = meter_middle + margin_top
-            bar_bottom = bar_top + 5
-
-            draw.rounded_rectangle(
-                (meter_left, bar_top, meter_right, bar_bottom),
-                radius=3,
-                fill=self.get_color("dial-bar-bg"),
-            )
-
-            if value:
-                draw.rounded_rectangle(
-                    (
-                        meter_left,
-                        bar_top,
-                        round(value * (meter_right - meter_left) + meter_left),
-                        bar_bottom,
-                    ),
-                    radius=3,
-                    fill=self.get_color("dial-bar-fill"),
-                )
-
-        return image
-
-    async def draw_value_dial(
-        self,
-        title: str,
-        icon: str,
-        value: float,
-        mini: bool = False,
-    ) -> Image.Image:
-        """
-        Draw a dial tile with a meter for a numeric value.
-        """
-        if mini:
-            label = textwrap.shorten(title, width=12, placeholder="\u2026")
-            anchor = "ld"
-        else:
-            label = f"{round(100*value):3d}%"
-            anchor = "rd"
         return await self._draw_dial(
-            title, icon, label, mini, anchor=anchor, value=value
+            title, icon, state, mini, anchor="ld", colors=colors
         )
 
     def draw_time(self) -> Image.Image:

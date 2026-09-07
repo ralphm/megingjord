@@ -325,6 +325,54 @@ class FakeDial:
         return Image.new("RGBA", (220, 100))
 
 
+class FakeKey:
+    """
+    A key with a mocked controller.
+    """
+
+    def __init__(self, key: int) -> None:
+        self.key = key
+        self.controller = None
+
+
+class TestKeyRegistration:
+    """
+    Tests for L{megingjord.streamdeck.DeckController} key registration.
+    """
+
+    def test_register(self) -> None:
+        """
+        Registering a key adds it and sets the controller.
+        """
+        controller = make_controller()
+        key = FakeKey(0)
+        controller.register_key(key)
+        assert controller.keys[0] is key
+        assert key.controller is controller
+
+    def test_unregister(self) -> None:
+        """
+        Unregistering a key removes it and clears the controller.
+        """
+        controller = make_controller()
+        key = FakeKey(0)
+        controller.register_key(key)
+        controller.unregister_key(key)
+        assert 0 not in controller.keys
+        assert key.controller is None
+
+    def test_unregister_twice(self) -> None:
+        """
+        Unregistering a key twice does not raise.
+        """
+        controller = make_controller()
+        key = FakeKey(0)
+        controller.register_key(key)
+        controller.unregister_key(key)
+        controller.unregister_key(key)
+        assert 0 not in controller.keys
+
+
 class TestOnDialChange:
     """
     Tests for L{megingjord.streamdeck.DeckController.on_dial_change}.

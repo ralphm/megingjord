@@ -217,9 +217,12 @@ class DeckController:
     def unregister_key(self, key: Key) -> None:
         """
         Unregister a key.
+
+        Tolerates a key that is no longer registered, since a disconnect
+        or a phase change can unregister the same key twice.
         """
         key.controller = None
-        del self.keys[key.key]
+        self.keys.pop(key.key, None)
 
     def start_key_animation(
         self, key: int, render: Callable[[float], Awaitable[bytes]]

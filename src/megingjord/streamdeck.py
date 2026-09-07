@@ -300,6 +300,10 @@ class DeckController:
         if deck != self.deck or dial not in self.dials:
             return
 
+        # The user is looking at this dial; hide the status bar for a bit.
+        if dial in (1, 2):
+            self.status_inhibited = time.time() + 1
+
         try:
             if event_type == DialEventType.PUSH:
                 assert isinstance(value, bool)
@@ -414,7 +418,7 @@ class DeckController:
             self.deck = None
         await asyncio.sleep(0.5)
 
-    async def render_lcd(self, interacted_dial: int | None = None) -> None:
+    async def render_lcd(self) -> None:
         """
         Render the LCD display.
         """
@@ -424,9 +428,6 @@ class DeckController:
         image = Image.new(
             "RGBA", (800, 100), self.renderer.get_color("lcd-bg")
         )
-
-        if interacted_dial in (1, 2):
-            self.status_inhibited = time.time() + 1
 
         status_bar: bool = time.time() > self.status_inhibited
 
@@ -510,7 +511,7 @@ class BrightnessDial:
         Called when the dial got pressed or released.
         """
         if dial_state and self.controller:
-            await self.controller.render_lcd(interacted_dial=self.dial)
+            await self.controller.render_lcd()
 
     async def on_dial_turn(self, value: int) -> None:
         """
@@ -521,7 +522,7 @@ class BrightnessDial:
 
         change = round(value / abs(value) * (1.6 ** abs(value) - 1))
         self.controller.set_brightness(self.deck.brightness + change)
-        await self.controller.render_lcd(interacted_dial=self.dial)
+        await self.controller.render_lcd()
 
 
 def create_touchscreen_tile_image(_deck: StreamDeck) -> Image.Image:

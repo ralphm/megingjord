@@ -5,7 +5,7 @@ Tests for L{megingjord.streamdeck}.
 """
 
 import asyncio
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from aiohttp import web
@@ -13,7 +13,7 @@ from aiohttp import web
 from megingjord.color_utils import get_colors
 from megingjord.icon import get_icon, svg_icon
 from megingjord.render import Renderer, wrap_text
-from megingjord.streamdeck import DeckController
+from megingjord.streamdeck import DeckController, DialEventType
 
 pytestmark = pytest.mark.filterwarnings("ignore::aiohttp.web.NotAppKeyWarning")
 
@@ -300,6 +300,109 @@ class TestRenderBlocks:
             any(px[x, y][3] > 0 for x in range(image.width)) for y in range(3)
         ]
         assert not any(top_rows)
+
+
+class FakeDial:
+    """
+    A dial with mocked handlers.
+    """
+
+    def __init__(self) -> None:
+        self.on_dial_push = AsyncMock()
+        self.on_dial_turn = AsyncMock()
+
+
+class TestOnDialChange:
+    """
+    Tests for L{megingjord.streamdeck.DeckController.on_dial_change}.
+    """
+
+    @pytest.mark.asyncio
+    async def test_turn_inhibits(self) -> None:
+        """
+        Turning dial 1 inhibits the status bar and dispatches the turn.
+        """
+        controller = make_controller()
+        dial = FakeDial()
+        controller.dials[1] = dial
+        await controller.on_dial_change(
+            controller.deck, 1, DialEventType.TURN, 5
+        )
+        assert controller.status_inhibited > 0
+        dial.on_dial_turn.assert_awaited_once_with(5)
+
+    @pytest.mark.asyncio
+    async def test_push_inhibits(self) -> None:
+        """
+        Pushing dial 2 inhibits the status bar and dispatches the push.
+        """
+        controller = make_controller()
+        dial = FakeDial()
+        controller.dials[2] = dial
+        await controller.on_dial_change(
+            controller.deck, 2, DialEventType.PUSH, True
+        )
+        assert controller.status_inhibited > 0
+        dial.on_dial_push.assert_awaited_once_with(True)
+
+    @pytest.mark.asyncio
+    async def test_release_inhibits(self) -> None:
+        """
+        Releasing a dial is part of the interaction and inhibits too.
+        """
+        controller = make_controller()
+        dial = FakeDial()
+        controller.dials[1] = dial
+        await controller.on_dial_change(
+            controller.deck, 1, DialEventType.PUSH, False
+        )
+        assert controller.status_inhibited > 0
+        dial.on_dial_push.assert_awaited_once_with(False)
+
+    @pytest.mark.asyncio
+    async def test_other_dials_do_not_inhibit(self) -> None:
+        """
+        Turning dials 0 and 3 does not inhibit the status bar.
+        """
+        controller = make_controller()
+        dial = FakeDial()
+        controller.dials[0] = dial
+        controller.dials[3] = dial
+        await controller.on_dial_change(
+            controller.deck, 0, DialEventType.TURN, 5
+        )
+        await controller.on_dial_change(
+            controller.deck, 3, DialEventType.TURN, 5
+        )
+        assert controller.status_inhibited == 0
+        assert dial.on_dial_turn.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_unknown_dial_ignored(self) -> None:
+        """
+        Events for unregistered dials are ignored.
+        """
+        controller = make_controller()
+        dial = FakeDial()
+        controller.dials[1] = dial
+        await controller.on_dial_change(
+            controller.deck, 2, DialEventType.TURN, 5
+        )
+        assert controller.status_inhibited == 0
+        dial.on_dial_turn.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_handler_error_logged(self) -> None:
+        """
+        A failing dial handler is logged, not raised.
+        """
+        controller = make_controller()
+        dial = FakeDial()
+        dial.on_dial_turn = AsyncMock(side_effect=Exception("boom"))
+        controller.dials[1] = dial
+        await controller.on_dial_change(
+            controller.deck, 1, DialEventType.TURN, 5
+        )
 
 
 class TestKeyAnimation:

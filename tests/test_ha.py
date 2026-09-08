@@ -2077,6 +2077,89 @@ def make_alarm_dial(state: dict | None) -> HAAlarmDial:
     return dial
 
 
+class TestHAAlarmTileStyle:
+    """
+    Tests for L{megingjord.ha.HAAlarmTile._tile_style}.
+    """
+
+    def test_no_state(self) -> None:
+        """
+        Without a state, the style is inactive without secondary.
+        """
+        tile = make_alarm_tile(None)
+        assert tile._tile_style(None) == (
+            {"icon-primary": "icon-inactive", "tile-bg": "tile-inactive-bg"},
+            None,
+            None,
+        )
+
+    def test_unavailable(self) -> None:
+        """
+        An unavailable alarm shows the alert badge, inactive.
+        """
+        tile = make_alarm_tile(None)
+        assert tile._tile_style({"state": "unavailable"}) == (
+            {"icon-primary": "icon-inactive", "tile-bg": "tile-inactive-bg"},
+            None,
+            "alert-circle",
+        )
+
+    def test_pulsing(self) -> None:
+        """
+        A pulsing state uses its pulse color without secondary.
+        """
+        tile = make_alarm_tile(None)
+        assert tile._tile_style({"state": "pending"}) == (
+            {"icon-primary": "icon-warning"},
+            None,
+            None,
+        )
+
+    def test_transitioning(self) -> None:
+        """
+        A transitioning state is inactive without secondary.
+        """
+        tile = make_alarm_tile(None)
+        assert tile._tile_style({"state": "disarming"}) == (
+            {"icon-primary": "icon-inactive", "tile-bg": "tile-inactive-bg"},
+            None,
+            None,
+        )
+
+    def test_armed(self) -> None:
+        """
+        An armed state is ok-colored with the disarm secondary.
+        """
+        tile = make_alarm_tile(None)
+        assert tile._tile_style({"state": "armed_away"}) == (
+            {"icon-primary": "icon-ok"},
+            "shield-off",
+            None,
+        )
+
+    def test_disarmed(self) -> None:
+        """
+        A disarmed state is inactive with the arm target secondary.
+        """
+        tile = make_alarm_tile(None)
+        assert tile._tile_style({"state": "disarmed"}) == (
+            {"icon-primary": "icon-inactive", "tile-bg": "tile-inactive-bg"},
+            "shield-moon",
+            None,
+        )
+
+    def test_unknown_state(self) -> None:
+        """
+        An unknown state is active with the disarm secondary.
+        """
+        tile = make_alarm_tile(None)
+        assert tile._tile_style({"state": "weird"}) == (
+            {"icon-primary": "icon-active"},
+            "shield-off",
+            None,
+        )
+
+
 class TestHAAlarmTile:
     """
     Tests for L{megingjord.ha.HAAlarmTile}.

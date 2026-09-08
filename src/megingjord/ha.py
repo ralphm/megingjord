@@ -1129,8 +1129,6 @@ class HAAlarmTile(HAEntityTile):
         Stable states show a transition tile with the target state;
         transient and unavailable states show a state tile.
         """
-
-        # pylint: disable=too-many-branches,too-many-statements
         if not self.controller or not self.deck:
             return
 
@@ -1140,12 +1138,6 @@ class HAAlarmTile(HAEntityTile):
             text = "Disconnected"
             icon = "cloud-question-outline"
             subtitle = None
-            badge = None
-            colors = {
-                "icon-primary": "icon-inactive",
-                "tile-bg": "tile-inactive-bg",
-            }
-            secondary = None
         else:
             attributes = state.get("attributes", {})
             text = attributes.get("friendly_name", self.entity_id)
@@ -1156,38 +1148,8 @@ class HAAlarmTile(HAEntityTile):
             if icon == DOMAIN_ICONS.get("alarm_control_panel"):
                 icon = ALARM_ICONS.get(value, icon)
             subtitle = get_state_text(state)
-            badge = None
-            if value == "unavailable":
-                badge = "alert-circle"
-                colors = {
-                    "icon-primary": "icon-inactive",
-                    "tile-bg": "tile-inactive-bg",
-                }
-                secondary = None
-            elif value in ALARM_PULSING:
-                colors = {"icon-primary": ALARM_PULSE_COLORS[value]}
-                secondary = None
-            elif value in ALARM_TRANSITIONING:
-                colors = {
-                    "icon-primary": "icon-inactive",
-                    "tile-bg": "tile-inactive-bg",
-                }
-                secondary = None
-            elif value in ALARM_ARMED:
-                colors = {"icon-primary": "icon-ok"}
-                secondary = "shield-off"
-            elif value == "disarmed":
-                colors = {
-                    "icon-primary": "icon-inactive",
-                    "tile-bg": "tile-inactive-bg",
-                }
-                target_state = ALARM_SERVICE_STATES.get(
-                    self.arm_service, "armed_away"
-                )
-                secondary = ALARM_ICONS.get(target_state, "shield")
-            else:
-                colors = {"icon-primary": "icon-active"}
-                secondary = "shield-off"
+
+        colors, secondary, badge = self._tile_style(state)
 
         logger.debug(f"Setting key {self.key} to icon {icon}: {text!r}")
 
@@ -1207,6 +1169,65 @@ class HAAlarmTile(HAEntityTile):
             self._start_pulse(ALARM_PULSE_COLORS[state["state"]])
         else:
             self._stop_pulse()
+
+    def _tile_style(
+        self, state: dict[str, Any] | None
+    ) -> tuple[dict[str, str], str | None, str | None]:
+        """
+        Get the colors, secondary icon and badge for the alarm state.
+        """
+        if state is None:
+            return (
+                {
+                    "icon-primary": "icon-inactive",
+                    "tile-bg": "tile-inactive-bg",
+                },
+                None,
+                None,
+            )
+
+        value = state["state"]
+
+        if value == "unavailable":
+            return (
+                {
+                    "icon-primary": "icon-inactive",
+                    "tile-bg": "tile-inactive-bg",
+                },
+                None,
+                "alert-circle",
+            )
+
+        if value in ALARM_PULSING:
+            return ({"icon-primary": ALARM_PULSE_COLORS[value]}, None, None)
+
+        if value in ALARM_TRANSITIONING:
+            return (
+                {
+                    "icon-primary": "icon-inactive",
+                    "tile-bg": "tile-inactive-bg",
+                },
+                None,
+                None,
+            )
+
+        if value in ALARM_ARMED:
+            return ({"icon-primary": "icon-ok"}, "shield-off", None)
+
+        if value == "disarmed":
+            target_state = ALARM_SERVICE_STATES.get(
+                self.arm_service, "armed_away"
+            )
+            return (
+                {
+                    "icon-primary": "icon-inactive",
+                    "tile-bg": "tile-inactive-bg",
+                },
+                ALARM_ICONS.get(target_state, "shield"),
+                None,
+            )
+
+        return ({"icon-primary": "icon-active"}, "shield-off", None)
 
     async def _draw_state(self, colors: dict[str, str]) -> bytes:
         """

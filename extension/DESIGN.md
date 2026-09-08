@@ -34,7 +34,7 @@ JSON messages over `ws://127.0.0.1:2394`.
 
 | Event | Payload | Notes |
 |---|---|---|
-| `phase` | `{"event": "phase", "phase": "lobby"\|"greenRoom"\|"meeting"\|"exitHall"\|"none"}` | Sent on change and on (re)connect; `none` means no Meet tab is open |
+| `phase` | `{"event": "phase", "phase": "lobby"\|"greenRoom"\|"greenRoomSwitch"\|"meeting"\|"exitHall"\|"none"}` | Sent on change and on (re)connect; `greenRoomSwitch` is the green room while a call runs on another device; `none` means no Meet tab is open |
 | `micMutedState` | `{"event": "micMutedState", "muted": bool}` | |
 | `cameraMutedState` | `{"event": "cameraMutedState", "muted": bool}` | |
 | `handMutedState` | `{"event": "handMutedState", "muted": bool}` | `muted` means hand not raised |
@@ -54,6 +54,7 @@ JSON messages over `ws://127.0.0.1:2394`.
 | `startInstantMeeting` | Start an instant meeting (lobby) |
 | `startNextMeeting` | Start the next scheduled meeting (lobby) |
 | `enterMeeting` | Join now (green room) |
+| `switchHere` | Switch the call to this device (green room, while a call runs on another device) |
 | `rejoin` | Rejoin the meeting (exit hall) |
 | `returnHome` | Return to the Meet home screen (green room / exit hall) |
 
@@ -66,13 +67,14 @@ and state and executes commands.
 |---|---|
 | `lobby` | start-instant, start-next (calendar-remove icon when no scheduled meeting) |
 | `greenRoom` | mic, camera, home, enter (dimmed until join button ready) |
+| `greenRoomSwitch` | mic, camera, switch, enter (dimmed until join button ready) |
 | `meeting` | mic, camera, hand, leave |
 | `exitHall` | home, rejoin |
 
 ## Multi-tab policy
 
 The background script tracks state per tab and reports the "best" tab:
-`meeting` > `greenRoom` > `lobby` > `exitHall`, tie-broken by most recent
+`meeting` > `greenRoom` = `greenRoomSwitch` > `lobby` > `exitHall`, tie-broken by most recent
 activity. Commands from Megingjord are routed to the best tab.
 
 ## Selectors

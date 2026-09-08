@@ -22,7 +22,10 @@ function detectPhase() {
     return "meeting";
   }
   if (document.querySelector('[jsname="Qx7uuf"]')) {
-    return "greenRoom";
+    // The switch button only exists while a call runs on another
+    // device; report it as a distinct phase so Megingjord can show a
+    // different button layout.
+    return queryByText("Switch here") ? "greenRoomSwitch" : "greenRoom";
   }
   if (
     document.querySelector('[jsname="r4nke"]') &&
@@ -88,6 +91,14 @@ function isDisabled(element) {
   );
 }
 
+// The button text includes the material icon name (e.g. "add_to_queue");
+// strip it so the label is the visible text only.
+function buttonLabel(button) {
+  const clone = button.cloneNode(true);
+  clone.querySelector("i.google-symbols")?.remove();
+  return (clone.textContent || "").trim();
+}
+
 // The first meeting card in the Scheduled section.
 function firstScheduledCard() {
   const section = document.querySelector(SCHEDULED_SECTION_SELECTOR);
@@ -126,11 +137,11 @@ function readState() {
     state.handMuted = !isHandRaised(handButton);
   }
 
-  if (state.phase === "greenRoom") {
+  if (state.phase === "greenRoom" || state.phase === "greenRoomSwitch") {
     const enterButton = getJoinButton();
     if (enterButton) {
       state.enterReady = !isDisabled(enterButton);
-      state.enterLabel = (enterButton.textContent || "").trim();
+      state.enterLabel = buttonLabel(enterButton);
     }
     const titleElement = document.querySelector('[jsname="r4nke"]');
     if (titleElement) {
@@ -211,6 +222,7 @@ const COMMANDS = {
     }
     button.click();
   },
+  switchHere: () => clickByText("Switch here"),
   rejoin: () => clickButton(REJOIN_SELECTOR, "rejoin") || clickByText("Rejoin"),
   returnHome: () =>
     clickButton(RETURN_HOME_SELECTOR, "return home") ||

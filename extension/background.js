@@ -13,6 +13,7 @@ const RECONNECT_INTERVAL_MS = 2000;
 const PHASE_PRIORITY = {
   meeting: 3,
   greenRoom: 2,
+  greenRoomSwitch: 2,
   lobby: 1,
   exitHall: 0,
 };

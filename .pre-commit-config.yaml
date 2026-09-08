@@ -23,3 +23,12 @@ repos:
       - id: end-of-file-fixer
       - id: check-toml
       - id: check-yaml
+
+  - repo: local
+    hooks:
+      - id: check-example-config
+        name: check example config schema
+        entry: python tools/check_example_config.py
+        language: python
+        additional_dependencies: ["."]
+        files: ^config\.example\.yaml$

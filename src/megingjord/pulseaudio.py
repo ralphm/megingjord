@@ -26,6 +26,12 @@ from pulsectl import (
 from pulsectl_asyncio import PulseAsync
 from StreamDeck.Devices.StreamDeck import StreamDeck
 
+from .registry import (
+    BuildContext,
+    ConfigError,
+    register_dial_type,
+    register_key_type,
+)
 from .streamdeck import DeckController, ScrollerItem, ScrollerView
 
 logger = logging.getLogger(__name__)
@@ -1087,3 +1093,47 @@ class PulseDefaultSourceDial:
         )
 
         return image
+
+
+def _build_sink_dial(
+    dial: int, _config: Any, context: BuildContext
+) -> PulseDefaultSinkDial:
+    """
+    Build a PulseAudio default sink dial.
+    """
+    if context.pulse is None:
+        raise ConfigError(
+            f"dials[{dial}]: pulseaudio.sink requires a pulseaudio section"
+        )
+    return PulseDefaultSinkDial(dial, pulse=context.pulse)
+
+
+def _build_source_dial(
+    dial: int, _config: Any, context: BuildContext
+) -> PulseDefaultSourceDial:
+    """
+    Build a PulseAudio default source dial.
+    """
+    if context.pulse is None:
+        raise ConfigError(
+            f"dials[{dial}]: pulseaudio.source requires a pulseaudio section"
+        )
+    return PulseDefaultSourceDial(dial, pulse=context.pulse)
+
+
+def _build_sink_key(
+    key: int, _config: Any, context: BuildContext
+) -> PulseDefaultSinkKey:
+    """
+    Build a PulseAudio default sink key.
+    """
+    if context.pulse is None:
+        raise ConfigError(
+            f"keys[{key}]: pulseaudio.sink requires a pulseaudio section"
+        )
+    return PulseDefaultSinkKey(key, pulse=context.pulse)
+
+
+register_dial_type("pulseaudio.sink", _build_sink_dial)
+register_dial_type("pulseaudio.source", _build_source_dial)
+register_key_type("pulseaudio.sink", _build_sink_key)

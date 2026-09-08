@@ -10,7 +10,7 @@ import asyncio
 import logging
 import math
 import time
-from typing import Awaitable, Callable, Protocol, Sequence
+from typing import Any, Awaitable, Callable, Protocol, Sequence
 
 from aiohttp import web
 from attrs import Attribute, define, field
@@ -20,6 +20,7 @@ from StreamDeck.Devices.StreamDeck import DialEventType, StreamDeck
 from StreamDeck.ImageHelpers.PILHelper import _to_native_format
 from StreamDeck.Transport.Transport import TransportError
 
+from .registry import BuildContext, register_dial_type
 from .render import Renderer
 
 # Key animation settings.
@@ -561,3 +562,15 @@ def set_touchscreen_tile_image(
     tile of the touchscreen.
     """
     deck.set_touchscreen_image(image, 220 * tile, 0, 140, 100)
+
+
+def _build_brightness_dial(
+    dial: int, _config: Any, _context: BuildContext
+) -> BrightnessDial:
+    """
+    Build a brightness dial.
+    """
+    return BrightnessDial(dial)
+
+
+register_dial_type("brightness", _build_brightness_dial)

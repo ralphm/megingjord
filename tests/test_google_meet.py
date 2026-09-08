@@ -43,7 +43,7 @@ class TestGoogleMeetActionKey:
         """
         The home tile uses google-meet-secondary in the Green Room.
         """
-        key = make_key("green room")
+        key = make_key("greenRoom")
         await key._draw()
         key.controller.renderer.draw_state_tile.assert_awaited_once_with(
             title="Home",
@@ -77,7 +77,7 @@ class TestGoogleMeetActionKey:
         """
         Other controls keep their color in the Green Room.
         """
-        key = make_key("green room", control="hangup")
+        key = make_key("greenRoom", control="hangup")
         await key._draw()
         key.controller.renderer.draw_state_tile.assert_awaited_once_with(
             title="Leave call",
@@ -87,4 +87,21 @@ class TestGoogleMeetActionKey:
                 "icon-primary": "google-meet-hangup-icon",
             },
             icon="phone-hangup",
+        )
+
+    @pytest.mark.asyncio
+    async def test_switch_tile(self) -> None:
+        """
+        The switch tile uses its action key colors and icon.
+        """
+        key = make_key("greenRoomSwitch", control="switch")
+        await key._draw()
+        key.controller.renderer.draw_state_tile.assert_awaited_once_with(
+            title="Switch here",
+            subtitle=None,
+            colors={
+                "tile-bg": "google-meet-active-bg",
+                "icon-primary": "google-meet-active-icon",
+            },
+            icon="video-switch-outline",
         )

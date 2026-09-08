@@ -50,6 +50,12 @@ ACTION_KEYS = {
         "google-meet-active",
     ),
     "enter": ("enterMeeting", "Join now", "login", "google-meet-active"),
+    "switch": (
+        "switchHere",
+        "Switch here",
+        "video-switch-outline",
+        "google-meet-active",
+    ),
     "home": ("returnHome", "Home", "home", "google-meet-active"),
     "rejoin": ("rejoin", "Rejoin", "replay", "google-meet-secondary"),
     "hangup": (
@@ -234,7 +240,7 @@ class GoogleMeetActionKey:
 
         _event, title, icon, color = ACTION_KEYS[self.control]
 
-        if self.control == "home" and self.meet.phase == "green room":
+        if self.control == "home" and self.meet.phase == "greenRoom":
             color = "google-meet-secondary"
 
         if self.title:
@@ -282,10 +288,10 @@ class GoogleMeetCoordinator:
     Coordinator for Google Meet calls.
 
     The keys shown on the Stream Deck depend on the meeting phase reported
-    by the browser extension: lobby, green room, meeting, exit hall, or
-    none when no Meet tab is open. Controls can additionally be hidden
-    (e.g. no scheduled meeting to start) or marked not ready (e.g. the
-    join button not yet clickable).
+    by the browser extension: lobby, greenRoom, greenRoomSwitch, meeting,
+    exitHall, or none when no Meet tab is open. Controls can additionally
+    be hidden (e.g. no scheduled meeting to start) or marked not ready
+    (e.g. the join button not yet clickable).
     """
 
     app: web.Application

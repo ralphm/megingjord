@@ -1129,7 +1129,7 @@ def _build_pulseaudio(data: dict[str, Any], context: BuildContext) -> None:
             WeightConfig(**weight) for weight in data.get("input_weights", [])
         ],
     )
-    context.pulse = PulseAudioCoordinator(
+    context.pulseaudio = PulseAudioCoordinator(
         context.app,
         output_weights=[asdict(weight) for weight in config.output_weights],
         input_weights=[asdict(weight) for weight in config.input_weights],
@@ -1142,11 +1142,11 @@ def _build_sink_dial(
     """
     Build a PulseAudio default sink dial.
     """
-    if context.pulse is None:
+    if context.pulseaudio is None:
         raise ConfigError(
             f"dials[{dial}]: pulseaudio.sink requires a pulseaudio section"
         )
-    return PulseDefaultSinkDial(dial, pulse=context.pulse)
+    return PulseDefaultSinkDial(dial, pulse=context.pulseaudio)
 
 
 def _build_source_dial(
@@ -1155,11 +1155,11 @@ def _build_source_dial(
     """
     Build a PulseAudio default source dial.
     """
-    if context.pulse is None:
+    if context.pulseaudio is None:
         raise ConfigError(
             f"dials[{dial}]: pulseaudio.source requires a pulseaudio section"
         )
-    return PulseDefaultSourceDial(dial, pulse=context.pulse)
+    return PulseDefaultSourceDial(dial, pulse=context.pulseaudio)
 
 
 def _build_sink_key(
@@ -1168,11 +1168,11 @@ def _build_sink_key(
     """
     Build a PulseAudio default sink key.
     """
-    if context.pulse is None:
+    if context.pulseaudio is None:
         raise ConfigError(
             f"keys[{key}]: pulseaudio.sink requires a pulseaudio section"
         )
-    return PulseDefaultSinkKey(key, pulse=context.pulse)
+    return PulseDefaultSinkKey(key, pulse=context.pulseaudio)
 
 
 register_section("pulseaudio", _build_pulseaudio)

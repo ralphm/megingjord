@@ -494,7 +494,7 @@ def _build_google_meet(data: dict[str, Any], context: BuildContext) -> None:
     Build the Google Meet coordinator from its configuration section.
     """
     config = GoogleMeetConfig(phases=data["phases"])
-    context.meet = GoogleMeetCoordinator(
+    context.google_meet = GoogleMeetCoordinator(
         context.app, context.controller, config.phases
     )
 

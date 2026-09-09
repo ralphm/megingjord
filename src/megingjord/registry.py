@@ -36,9 +36,9 @@ class BuildContext:
     app: Any
     controller: Any = None
     config: Any = None
-    pulse: Any = None
+    pulseaudio: Any = None
     ha: Any = None
-    meet: Any = None
+    google_meet: Any = None
     _started: set[str] = field(factory=set, init=False)
 
     def request(self, namespace: str) -> None:

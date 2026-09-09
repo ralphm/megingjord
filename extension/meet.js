@@ -29,6 +29,7 @@ function detectPhase() {
   }
   if (
     document.querySelector('[jsname="r4nke"]') &&
+    document.querySelector(REJOIN_SELECTOR) &&
     !document.querySelector("[data-is-muted]")
   ) {
     return "exit_hall";

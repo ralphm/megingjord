@@ -5,7 +5,7 @@
   "description": "Google Meet state and control for Megingjord.",
   "host_permissions": [
     "https://meet.google.com/*",
-    "ws://127.0.0.1:*/*"
+    "ws://127.0.0.1/*"
   ],
   "content_security_policy": {
     "extension_pages": "script-src 'self'; connect-src ws://127.0.0.1:*"

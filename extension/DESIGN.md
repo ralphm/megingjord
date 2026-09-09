@@ -28,7 +28,9 @@ overrides the CSP with an explicit `connect-src ws://127.0.0.1:*`.
 
 The WebSocket URL is configurable via the extension options page (default
 `ws://127.0.0.1:2394`); it must match the `google_meet` section's `host` and
-`port` in the Megingjord configuration.
+`port` in the Megingjord configuration. Firefox match patterns do not support
+ports, so the manifest's `host_permissions` use `ws://127.0.0.1/*`, which
+matches any port on localhost (the port is ignored in matching).
 
 ## Protocol
 

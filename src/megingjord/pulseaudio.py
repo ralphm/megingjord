@@ -127,8 +127,8 @@ class PulseOutput:
 
         def check_rule(rule: dict[str, Any]) -> bool:
             return check_resource(
-                rule.get("card", {}), self.card
-            ) and check_resource(rule.get("port", {}), self.port)
+                rule.get("card") or {}, self.card
+            ) and check_resource(rule.get("port") or {}, self.port)
 
         weight_adjust = 0
         for weight_rule in self.coordinator.output_weights:
@@ -244,8 +244,8 @@ class PulseInput:
 
         def check_rule(rule: dict[str, Any]) -> bool:
             return check_resource(
-                rule.get("card", {}), self.card
-            ) and check_resource(rule.get("port", {}), self.port)
+                rule.get("card") or {}, self.card
+            ) and check_resource(rule.get("port") or {}, self.port)
 
         weight_adjust = 0
         for weight_rule in self.coordinator.input_weights:

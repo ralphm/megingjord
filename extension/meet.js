@@ -37,6 +37,23 @@ function detectPhase() {
   return undefined;
 }
 
+// The URL changes before the new page renders; report the phase from
+// the URL immediately so the tiles react without waiting for the DOM.
+const MEETING_CODE_RE = /^\/[a-z]{3}-[a-z]{4}-[a-z]{3}$/;
+
+function phaseFromUrl() {
+  const path = window.location.pathname;
+  if (path === "/" || path === "/home" || path === "/landing") {
+    return "lobby";
+  }
+  if (MEETING_CODE_RE.test(path)) {
+    // The user is entering a call; the DOM will refine the phase
+    // (meeting vs green room) once rendered.
+    return "meeting";
+  }
+  return undefined;
+}
+
 const MIC_SELECTORS = [
   'button[jsname="hw0c9"]', // verified: meeting and green room
   'div[role="button"][jsname="hw0c9"]', // older Join screen
@@ -263,6 +280,21 @@ document.addEventListener("visibilitychange", () => {
     sendState();
   }
 });
+
+// Watch for SPA navigations: the URL changes before the new page
+// renders, so report the phase from the URL immediately.
+let lastUrl = location.href;
+setInterval(() => {
+  if (location.href === lastUrl) {
+    return;
+  }
+  lastUrl = location.href;
+  const phase = phaseFromUrl();
+  if (phase !== undefined && phase !== detectPhase()) {
+    lastState = { ...lastState, phase };
+    browser.runtime.sendMessage({ type: "state", state: { phase } });
+  }
+}, 250);
 
 browser.runtime.onMessage.addListener((message) => {
   if (message.type === "getState") {

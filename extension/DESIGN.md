@@ -77,6 +77,14 @@ and state and executes commands.
 | `meeting` | mic, camera, hand, leave |
 | `exit_hall` | home, rejoin |
 
+## URL-based phase reporting
+
+The URL changes before the new page renders. The content script watches
+the URL and reports the phase from it immediately: lobby paths (`/`,
+`/home`, `/landing`) report `lobby`; a meeting-code path reports
+`meeting` optimistically, which the DOM-based detection refines (e.g. to
+`green_room`) once the page renders.
+
 ## Multi-tab policy
 
 The background script tracks state per tab and reports the "best" tab:

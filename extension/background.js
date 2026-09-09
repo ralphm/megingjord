@@ -6,16 +6,17 @@
 // background, and it is not subject to page-level ad blockers or the
 // browser's localhost permission prompt.
 
-const WS_URL = "ws://127.0.0.1:2394";
+const DEFAULT_WS_URL = "ws://127.0.0.1:2394";
+let wsUrl = DEFAULT_WS_URL;
 const RECONNECT_INTERVAL_MS = 2000;
 
 // Phases with higher priority win when multiple Meet tabs are open.
 const PHASE_PRIORITY = {
   meeting: 3,
-  greenRoom: 2,
-  greenRoomSwitch: 2,
+  green_room: 2,
+  green_room_switch: 2,
   lobby: 1,
-  exitHall: 0,
+  exit_hall: 0,
 };
 
 let socket = null;
@@ -25,7 +26,7 @@ let reconnectTimer = null;
 const tabStates = new Map();
 
 function connect() {
-  socket = new WebSocket(WS_URL);
+  socket = new WebSocket(wsUrl);
 
   socket.onopen = () => {
     console.log("Megingjord Meet: connected to Megingjord");
@@ -162,4 +163,16 @@ browser.tabs.onRemoved.addListener((tabId) => {
   }
 });
 
-connect();
+browser.storage.local.get({ wsUrl: DEFAULT_WS_URL }).then((items) => {
+  wsUrl = items.wsUrl || DEFAULT_WS_URL;
+  connect();
+});
+
+browser.storage.onChanged.addListener((changes, area) => {
+  if (area === "local" && changes.wsUrl) {
+    wsUrl = changes.wsUrl.newValue || DEFAULT_WS_URL;
+    if (socket) {
+      socket.close();
+    }
+  }
+});

@@ -9,10 +9,10 @@ Firefox-first browser extension providing Google Meet state and control to
 Meet tab (content script)          Extension background script          Megingjord
 ┌─────────────────────────┐   ┌──────────────────────────────┐   ┌──────────────────┐
 │ MutationObserver        │   │ owns WebSocket (never        │   │ aiohttp WS server │
-│ + 1s polling fallback  │──▶│ throttled, survives tab      │──▶│ port 2394         │
-│ + visibilitychange sync│   │ switches)                    │   │                  │
+│ + 1s polling fallback  │──▶│ throttled, survives tab      │──▶│ default port 2394 │
+│ + visibilitychange sync│   │ switches)                    │   │ (configurable)    │
 └─────────────────────────┘   └──────────────────────────────┘   └──────────────────┘
-        runtime.sendMessage            ws://127.0.0.1:2394
+        runtime.sendMessage            ws://127.0.0.1:2394 (default)
 ```
 
 The WebSocket lives in the background script, not the content script, so it:
@@ -24,7 +24,11 @@ The WebSocket lives in the background script, not the content script, so it:
 
 Note: Firefox's default Manifest V3 CSP includes `upgrade-insecure-requests`,
 which would upgrade the `ws://` connection to `wss://`. The manifest therefore
-overrides the CSP with an explicit `connect-src ws://127.0.0.1:2394`.
+overrides the CSP with an explicit `connect-src ws://127.0.0.1:*`.
+
+The WebSocket URL is configurable via the extension options page (default
+`ws://127.0.0.1:2394`); it must match the `google_meet` section's `host` and
+`port` in the Megingjord configuration.
 
 ## Protocol
 
@@ -34,7 +38,7 @@ JSON messages over `ws://127.0.0.1:2394`.
 
 | Event | Payload | Notes |
 |---|---|---|
-| `phase` | `{"event": "phase", "phase": "lobby"\|"greenRoom"\|"greenRoomSwitch"\|"meeting"\|"exitHall"\|"none"}` | Sent on change and on (re)connect; `greenRoomSwitch` is the green room while a call runs on another device; `none` means no Meet tab is open |
+| `phase` | `{"event": "phase", "phase": "lobby"\|"green_room"\|"green_room_switch"\|"meeting"\|"exit_hall"\|"none"}` | Sent on change and on (re)connect; `green_room_switch` is the green room while a call runs on another device; `none` means no Meet tab is open |
 | `micMutedState` | `{"event": "micMutedState", "muted": bool}` | |
 | `cameraMutedState` | `{"event": "cameraMutedState", "muted": bool}` | |
 | `handMutedState` | `{"event": "handMutedState", "muted": bool}` | `muted` means hand not raised |
@@ -66,16 +70,16 @@ and state and executes commands.
 | Phase | Keys |
 |---|---|
 | `lobby` | start-instant, start-next (calendar-remove icon when no scheduled meeting) |
-| `greenRoom` | mic, camera, home, enter (dimmed until join button ready) |
-| `greenRoomSwitch` | mic, camera, switch, enter (dimmed until join button ready) |
+| `green_room` | mic, camera, home, enter (dimmed until join button ready) |
+| `green_room_switch` | mic, camera, switch, enter (dimmed until join button ready) |
 | `meeting` | mic, camera, hand, leave |
-| `exitHall` | home, rejoin |
+| `exit_hall` | home, rejoin |
 
 ## Multi-tab policy
 
 The background script tracks state per tab and reports the "best" tab:
-`meeting` > `greenRoom` = `greenRoomSwitch` > `lobby` > `exitHall`, tie-broken by most recent
-activity. Commands from Megingjord are routed to the best tab.
+`meeting` > `green_room` = `green_room_switch` > `lobby` > `exit_hall`, tie-broken by most
+recent activity. Commands from Megingjord are routed to the best tab.
 
 ## Selectors
 
@@ -94,7 +98,8 @@ content script logs a warning when a command's button cannot be found.
 Personal use, unsigned:
 
 1. In Firefox `about:config`, set `xpinstall.signatures.required` to `false`.
-2. Zip the extension files (`manifest.json`, `background.js`, `meet.js`).
+2. Zip the extension files (`manifest.json`, `background.js`, `meet.js`,
+   `options.html`, `options.js`).
 3. In `about:addons`, use the settings cog -> "Install Add-on From File...".
 
 For temporary testing, load via `about:debugging` -> "Load Temporary Add-on".

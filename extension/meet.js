@@ -25,13 +25,13 @@ function detectPhase() {
     // The switch button only exists while a call runs on another
     // device; report it as a distinct phase so Megingjord can show a
     // different button layout.
-    return queryByText("Switch here") ? "greenRoomSwitch" : "greenRoom";
+    return queryByText("Switch here") ? "green_room_switch" : "green_room";
   }
   if (
     document.querySelector('[jsname="r4nke"]') &&
     !document.querySelector("[data-is-muted]")
   ) {
-    return "exitHall";
+    return "exit_hall";
   }
   return undefined;
 }
@@ -137,7 +137,7 @@ function readState() {
     state.handMuted = !isHandRaised(handButton);
   }
 
-  if (state.phase === "greenRoom" || state.phase === "greenRoomSwitch") {
+  if (state.phase === "green_room" || state.phase === "green_room_switch") {
     const enterButton = getJoinButton();
     if (enterButton) {
       state.enterReady = !isDisabled(enterButton);

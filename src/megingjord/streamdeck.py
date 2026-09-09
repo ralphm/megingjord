@@ -20,7 +20,14 @@ from StreamDeck.Devices.StreamDeck import DialEventType, StreamDeck
 from StreamDeck.ImageHelpers.PILHelper import _to_native_format
 from StreamDeck.Transport.Transport import TransportError
 
-from .registry import BuildContext, register_dial_type
+from .registry import (
+    DIAL_TYPES,
+    KEY_TYPES,
+    BuildContext,
+    ConfigError,
+    register_dial_type,
+    register_section,
+)
 from .render import Renderer
 
 # Key animation settings.
@@ -564,6 +571,75 @@ def set_touchscreen_tile_image(
     deck.set_touchscreen_image(image, 220 * tile, 0, 140, 100)
 
 
+@define
+class DialConfig:
+    """
+    A dial registration.
+    """
+
+    type: str
+    entity_id: str | None = None
+    arm_service: str | None = None
+
+
+@define
+class KeyConfig:
+    """
+    A key registration.
+    """
+
+    type: str
+    entity_id: str | None = None
+    arm_service: str | None = None
+    icon: str | None = None
+
+
+def _build_streamdeck(data: dict[str, Any], context: BuildContext) -> None:
+    """
+    Build the deck from the streamdeck configuration section.
+    """
+    context.app["color_theme"] = data.get("theme", "default")
+    controller = context.controller
+
+    dials = {
+        key: DialConfig(**value)
+        for key, value in data.get("dials", {}).items()
+    }
+    keys = {
+        key: KeyConfig(**value) for key, value in data.get("keys", {}).items()
+    }
+
+    # The Google Meet phases are alternative layouts (only one is
+    # active at a time), so they may share key numbers with each
+    # other; they must not collide with the statically registered keys.
+    phases = context.config.sections.get("google_meet", {}).get("phases", {})
+    claimed: dict[int, str] = {}
+    for key in keys:
+        claimed[key] = f"keys[{key}]"
+
+    for phase, phase_keys in phases.items():
+        for key in phase_keys:
+            if key in claimed:
+                raise ConfigError(
+                    f"Key {key} claimed by both {claimed[key]} and "
+                    f"google_meet.phases.{phase}"
+                )
+
+    for dial, dial_config in dials.items():
+        builder = DIAL_TYPES.get(dial_config.type)
+        if builder is None:
+            raise ConfigError(
+                f"dials[{dial}]: unknown type {dial_config.type!r}"
+            )
+        controller.register_dial(builder(dial, dial_config, context))
+
+    for key, key_config in keys.items():
+        builder = KEY_TYPES.get(key_config.type)
+        if builder is None:
+            raise ConfigError(f"keys[{key}]: unknown type {key_config.type!r}")
+        controller.register_key(builder(key, key_config, context))
+
+
 def _build_brightness_dial(
     dial: int, _config: Any, _context: BuildContext
 ) -> BrightnessDial:
@@ -573,4 +649,5 @@ def _build_brightness_dial(
     return BrightnessDial(dial)
 
 
+register_section("streamdeck", _build_streamdeck)
 register_dial_type("brightness", _build_brightness_dial)

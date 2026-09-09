@@ -65,8 +65,10 @@ streamdeck:
 """,
             )
         )
-        assert config.streamdeck.theme == "dracula"
-        assert config.streamdeck.dials[1].type == "brightness"
+        assert config.sections["streamdeck"]["theme"] == "dracula"
+        assert (
+            config.sections["streamdeck"]["dials"][1]["type"] == "brightness"
+        )
 
     def test_env_interpolation(self, tmp_path: Path, monkeypatch) -> None:
         """
@@ -129,28 +131,6 @@ streamdeck:
                 )
             )
 
-    def test_duplicate_cross_section(self, tmp_path: Path) -> None:
-        """
-        A key claimed by both keys and a Google Meet phase is rejected.
-        """
-        with pytest.raises(ConfigError, match="claimed by both"):
-            load_config(
-                write_config(
-                    tmp_path,
-                    """
-streamdeck:
-  keys:
-    4:
-      type: ha.entity
-      entity_id: light.test
-google_meet:
-  phases:
-    meeting:
-      4: mic
-""",
-                )
-            )
-
     def test_phases_may_share_keys(self, tmp_path: Path) -> None:
         """
         Google Meet phases are alternatives and may share key numbers.
@@ -175,23 +155,6 @@ google_meet:
         phases = config.sections["google_meet"]["phases"]
         assert phases["lobby"][6] == "start-next"
         assert phases["greenRoom"][6] == "home"
-
-    def test_unknown_dial_type(self, tmp_path: Path) -> None:
-        """
-        An unknown dial type is rejected.
-        """
-        with pytest.raises(ConfigError, match="unknown type"):
-            load_config(
-                write_config(
-                    tmp_path,
-                    """
-streamdeck:
-  dials:
-    1:
-      type: bogus
-""",
-                )
-            )
 
     def test_unknown_integration(self, tmp_path: Path) -> None:
         """
@@ -289,7 +252,7 @@ class TestExampleConfig:
         monkeypatch.setenv("BUSYBAR_TOKEN", "example")
         example = Path(__file__).parent.parent / "config.example.yaml"
         config = load_config(example)
-        assert config.streamdeck.theme == "dracula"
+        assert config.sections["streamdeck"]["theme"] == "dracula"
         assert "home_assistant" in config.sections
         assert "greenRoomSwitch" in config.sections["google_meet"]["phases"]
 
@@ -347,6 +310,47 @@ home_assistant:
             )
         )
         with pytest.raises(ConfigError, match="entity_id"):
+            setup_from_config(self.make_app(), config)
+
+    def test_duplicate_cross_section(self, tmp_path: Path) -> None:
+        """
+        A key claimed by both keys and a Google Meet phase is rejected.
+        """
+        config = load_config(
+            write_config(
+                tmp_path,
+                """
+streamdeck:
+  keys:
+    4:
+      type: ha.entity
+      entity_id: light.test
+google_meet:
+  phases:
+    meeting:
+      4: mic
+""",
+            )
+        )
+        with pytest.raises(ConfigError, match="claimed by both"):
+            setup_from_config(self.make_app(), config)
+
+    def test_unknown_dial_type(self, tmp_path: Path) -> None:
+        """
+        An unknown dial type is rejected.
+        """
+        config = load_config(
+            write_config(
+                tmp_path,
+                """
+streamdeck:
+  dials:
+    1:
+      type: bogus
+""",
+            )
+        )
+        with pytest.raises(ConfigError, match="unknown type"):
             setup_from_config(self.make_app(), config)
 
     def test_builds_components(self, tmp_path: Path) -> None:

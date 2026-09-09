@@ -32,6 +32,7 @@ class BuildContext:
 
     app: Any
     controller: Any = None
+    config: Any = None
     pulse: Any = None
     ha: Any = None
     meet: Any = None
@@ -45,14 +46,26 @@ DIAL_TYPES: dict[str, DialBuilder] = {}
 KEY_TYPES: dict[str, KeyBuilder] = {}
 SECTION_HANDLERS: dict[str, SectionHandler] = {}
 
-# Namespace -> configuration section names owned by the integration.
-# The module name equals the namespace. The host (streamdeck) owns no
-# sections and is always loaded.
-INTEGRATIONS: dict[str, tuple[str, ...]] = {
-    "streamdeck": (),
-    "ha": ("home_assistant",),
-    "pulseaudio": ("pulseaudio",),
-    "google_meet": ("google_meet",),
+
+@define
+class Integration:
+    """
+    An integration: the configuration sections it owns and whether it
+    is a device.
+    """
+
+    sections: tuple[str, ...] = ()
+    device: bool = False
+
+
+# Namespace -> integration. The module name equals the namespace.
+# Device integrations (streamdeck now, busy bar later) are interpreted
+# after the support integrations, since they consume the built context.
+INTEGRATIONS: dict[str, Integration] = {
+    "streamdeck": Integration(sections=("streamdeck",), device=True),
+    "ha": Integration(sections=("home_assistant",)),
+    "pulseaudio": Integration(sections=("pulseaudio",)),
+    "google_meet": Integration(sections=("google_meet",)),
 }
 
 _loaded_integrations: set[str] = set()
@@ -77,6 +90,16 @@ def register_section(name: str, handler: SectionHandler) -> None:
     Register a configuration section handler.
     """
     SECTION_HANDLERS[name] = handler
+
+
+def is_device_section(name: str) -> bool:
+    """
+    Whether a configuration section belongs to a device integration.
+    """
+    for integration in INTEGRATIONS.values():
+        if name in integration.sections:
+            return integration.device
+    return False
 
 
 def load_integration(namespace: str) -> None:

@@ -309,6 +309,8 @@ class GoogleMeetCoordinator:
 
         yield
 
+        if self.socket is not None:
+            await self.socket.close()
         await self.runner.cleanup()
 
     async def handle_event(self, event: dict[str, Any]) -> None:

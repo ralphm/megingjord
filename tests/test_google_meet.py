@@ -84,6 +84,35 @@ class TestGoogleMeetCoordinator:
             {"event": "micMutedState", "muted": True}
         )
 
+    @pytest.mark.asyncio
+    async def test_start_closes_socket_before_cleanup(self) -> None:
+        """
+        The websocket is closed before the server is cleaned up, so
+        shutdown does not wait for the connection to time out.
+        """
+        coordinator = GoogleMeetCoordinator(web.Application())
+        calls: list[str] = []
+        coordinator.socket = AsyncMock()
+        coordinator.socket.close = AsyncMock(
+            side_effect=lambda: calls.append("close")
+        )
+
+        with (
+            patch("aiohttp.web.AppRunner") as runner_cls,
+            patch("aiohttp.web.TCPSite") as site_cls,
+        ):
+            runner = AsyncMock()
+            runner.cleanup = AsyncMock(
+                side_effect=lambda: calls.append("cleanup")
+            )
+            runner_cls.return_value = runner
+            site_cls.return_value = AsyncMock()
+
+            async for _ in coordinator.start(coordinator.app):
+                pass
+
+        assert calls == ["close", "cleanup"]
+
 
 class TestGoogleMeetTile:
     """

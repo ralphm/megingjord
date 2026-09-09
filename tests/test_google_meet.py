@@ -38,6 +38,53 @@ def make_tile(
     return tile
 
 
+class TestGoogleMeetCoordinator:
+    """
+    Tests for L{megingjord.google_meet.GoogleMeetCoordinator}.
+    """
+
+    @pytest.mark.asyncio
+    async def test_phase_event_deduped(self) -> None:
+        """
+        A phase event with the current phase is not broadcast.
+        """
+        coordinator = GoogleMeetCoordinator(web.Application())
+        coordinator.phase = "meeting"
+        subscriber = AsyncMock()
+        coordinator.subscribers.append(subscriber)
+        await coordinator.handle_event({"event": "phase", "phase": "meeting"})
+        subscriber.handle_event.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_phase_event_broadcast_on_change(self) -> None:
+        """
+        A phase event with a new phase is broadcast.
+        """
+        coordinator = GoogleMeetCoordinator(web.Application())
+        coordinator.phase = "lobby"
+        subscriber = AsyncMock()
+        coordinator.subscribers.append(subscriber)
+        await coordinator.handle_event({"event": "phase", "phase": "meeting"})
+        subscriber.handle_event.assert_awaited_once_with(
+            {"event": "phase", "phase": "meeting"}
+        )
+
+    @pytest.mark.asyncio
+    async def test_muted_event_broadcast(self) -> None:
+        """
+        A muted state event is broadcast to subscribers.
+        """
+        coordinator = GoogleMeetCoordinator(web.Application())
+        subscriber = AsyncMock()
+        coordinator.subscribers.append(subscriber)
+        await coordinator.handle_event(
+            {"event": "micMutedState", "muted": True}
+        )
+        subscriber.handle_event.assert_awaited_once_with(
+            {"event": "micMutedState", "muted": True}
+        )
+
+
 class TestGoogleMeetTile:
     """
     Tests for L{megingjord.google_meet.GoogleMeetTile}.

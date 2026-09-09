@@ -316,6 +316,11 @@ class GoogleMeetCoordinator:
         Handle incoming event.
         """
         if event["event"] == "phase":
+            # The extension sends the phase on every state change;
+            # only broadcast when it actually changed, so tiles do
+            # not reset their state on unrelated events.
+            if event["phase"] == self.phase:
+                return
             self.phase = event["phase"]
             self.states = {}
         elif match := RE_MUTED_STATE.match(event["event"]):

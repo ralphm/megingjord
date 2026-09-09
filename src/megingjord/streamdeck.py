@@ -27,6 +27,7 @@ from .registry import (
     ConfigError,
     register_dial_type,
     register_section,
+    section_namespace,
 )
 from .render import Renderer
 
@@ -608,6 +609,24 @@ def _build_streamdeck(data: dict[str, Any], context: BuildContext) -> None:
     keys = {
         key: KeyConfig(**value) for key, value in data.get("keys", {}).items()
     }
+
+    # Request the integrations this deck needs: those referenced by
+    # the dial and key types, and those with a configuration section
+    # (e.g. the Google Meet coordinator). Each requested integration
+    # interprets its own configuration and starts itself.
+    namespaces: set[str] = set()
+    for dial_config in dials.values():
+        if "." in dial_config.type:
+            namespaces.add(dial_config.type.partition(".")[0])
+    for key_config in keys.values():
+        if "." in key_config.type:
+            namespaces.add(key_config.type.partition(".")[0])
+    for name in context.config.sections:
+        namespace = section_namespace(name)
+        if namespace is not None:
+            namespaces.add(namespace)
+    for namespace in namespaces:
+        context.request(namespace)
 
     # The Google Meet phases are alternative layouts (only one is
     # active at a time), so they may share key numbers with each

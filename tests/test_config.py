@@ -32,11 +32,12 @@ class TestLoadConfig:
 
     def test_lazy_integration_loading(self, tmp_path: Path) -> None:
         """
-        A config referencing only the host loads no integrations.
+        Loading a config imports no integrations; setting up a config
+        with only the host starts only the streamdeck.
         """
         from megingjord.registry import _loaded_integrations
 
-        load_config(
+        config = load_config(
             write_config(
                 tmp_path,
                 """
@@ -47,6 +48,13 @@ streamdeck:
 """,
             )
         )
+        assert _loaded_integrations == set()
+
+        app = web.Application()
+        controller = MagicMock()
+        controller.deck = MagicMock()
+        app["deck_controller"] = controller
+        setup_from_config(app, config)
         assert _loaded_integrations == {"streamdeck"}
 
     def test_minimal(self, tmp_path: Path) -> None:
@@ -156,23 +164,6 @@ google_meet:
         assert phases["lobby"][6] == "start-next"
         assert phases["greenRoom"][6] == "home"
 
-    def test_unknown_integration(self, tmp_path: Path) -> None:
-        """
-        A type with an unknown namespace is rejected.
-        """
-        with pytest.raises(ConfigError, match="Unknown integration"):
-            load_config(
-                write_config(
-                    tmp_path,
-                    """
-streamdeck:
-  dials:
-    1:
-      type: bogus.entity
-""",
-                )
-            )
-
     def test_unknown_section(self, tmp_path: Path) -> None:
         """
         An unknown configuration section is rejected.
@@ -194,11 +185,12 @@ bogus:
 
     def test_registered_types(self, tmp_path: Path) -> None:
         """
-        The integrations register their dial and key types.
+        Setting up a config starts the integrations, which register
+        their dial and key types.
         """
         from megingjord.registry import DIAL_TYPES, KEY_TYPES, SECTION_HANDLERS
 
-        load_config(
+        config = load_config(
             write_config(
                 tmp_path,
                 """
@@ -225,6 +217,11 @@ google_meet:
 """,
             )
         )
+        app = web.Application()
+        controller = MagicMock()
+        controller.deck = MagicMock()
+        app["deck_controller"] = controller
+        setup_from_config(app, config)
 
         assert "brightness" in DIAL_TYPES
         assert "pulseaudio.sink" in DIAL_TYPES
@@ -271,6 +268,24 @@ class TestSetupFromConfig:
         controller.deck = MagicMock()
         app["deck_controller"] = controller
         return app
+
+    def test_unknown_integration(self, tmp_path: Path) -> None:
+        """
+        A type with an unknown namespace is rejected at setup.
+        """
+        config = load_config(
+            write_config(
+                tmp_path,
+                """
+streamdeck:
+  dials:
+    1:
+      type: bogus.entity
+""",
+            )
+        )
+        with pytest.raises(ConfigError, match="Unknown integration"):
+            setup_from_config(self.make_app(), config)
 
     def test_ha_entity_requires_home_assistant(self, tmp_path: Path) -> None:
         """

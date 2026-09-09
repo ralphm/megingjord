@@ -15,7 +15,7 @@ from __future__ import annotations
 import importlib
 from typing import Any, Callable
 
-from attrs import define
+from attrs import define, field
 
 
 class ConfigError(Exception):
@@ -28,6 +28,9 @@ class ConfigError(Exception):
 class BuildContext:
     """
     Shared objects available to type builders and section handlers.
+
+    Integrations are loaded and started on demand via request(); the
+    context grows as integrations are requested.
     """
 
     app: Any
@@ -36,6 +39,30 @@ class BuildContext:
     pulse: Any = None
     ha: Any = None
     meet: Any = None
+    _started: set[str] = field(factory=set, init=False)
+
+    def request(self, namespace: str) -> None:
+        """
+        Load and start an integration on demand.
+
+        The integration module is imported (running its registration
+        side effects) and its configuration sections are interpreted,
+        so the integration starts what it needs.
+        """
+        if namespace in self._started:
+            return
+        load_integration(namespace)
+        self._started.add(namespace)
+        integration = INTEGRATIONS[namespace]
+        for section in integration.sections:
+            data = self.config.sections.get(section)
+            if data is not None:
+                handler = SECTION_HANDLERS.get(section)
+                if handler is None:
+                    raise ConfigError(
+                        f"Unknown configuration section {section!r}"
+                    )
+                handler(data, self)
 
 
 DialBuilder = Callable[[int, Any, BuildContext], Any]
@@ -92,14 +119,24 @@ def register_section(name: str, handler: SectionHandler) -> None:
     SECTION_HANDLERS[name] = handler
 
 
+def section_namespace(name: str) -> str | None:
+    """
+    The integration namespace owning a configuration section.
+    """
+    for namespace, integration in INTEGRATIONS.items():
+        if name in integration.sections:
+            return namespace
+    return None
+
+
 def is_device_section(name: str) -> bool:
     """
     Whether a configuration section belongs to a device integration.
     """
-    for integration in INTEGRATIONS.values():
-        if name in integration.sections:
-            return integration.device
-    return False
+    namespace = section_namespace(name)
+    if namespace is None:
+        return False
+    return INTEGRATIONS[namespace].device
 
 
 def load_integration(namespace: str) -> None:

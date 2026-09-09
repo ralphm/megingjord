@@ -23,12 +23,10 @@ from aiohttp import web
 from attrs import define, field
 
 from .registry import (
-    INTEGRATIONS,
-    SECTION_HANDLERS,
     BuildContext,
     ConfigError,
     is_device_section,
-    load_integration,
+    section_namespace,
 )
 
 __all__ = [
@@ -104,40 +102,6 @@ class Config:
     sections: dict[str, dict[str, Any]] = field(factory=dict)
 
 
-def _referenced_namespaces(config: Config) -> set[str]:
-    """
-    The integration namespaces referenced by types and sections.
-
-    The dial and key types live in the streamdeck section; a type with
-    a namespace prefix (e.g. ``ha.entity``) references its integration.
-    """
-    namespaces: set[str] = set()
-
-    streamdeck_data = config.sections.get("streamdeck", {})
-    for dial_config in streamdeck_data.get("dials", {}).values():
-        if "." in dial_config["type"]:
-            namespaces.add(dial_config["type"].partition(".")[0])
-
-    for key_config in streamdeck_data.get("keys", {}).values():
-        if "." in key_config["type"]:
-            namespaces.add(key_config["type"].partition(".")[0])
-
-    for name in config.sections:
-        for namespace, integration in INTEGRATIONS.items():
-            if name in integration.sections:
-                namespaces.add(namespace)
-
-    return namespaces
-
-
-def _load_integrations(config: Config) -> None:
-    """
-    Import the integrations referenced by the configuration.
-    """
-    for namespace in _referenced_namespaces(config):
-        load_integration(namespace)
-
-
 def _build_config(data: dict[str, Any]) -> Config:
     """
     Build the config model from the parsed YAML.
@@ -148,7 +112,6 @@ def _build_config(data: dict[str, Any]) -> Config:
 
     config = Config(sections=data)
 
-    _load_integrations(config)
     _validate(config)
     return config
 
@@ -158,7 +121,7 @@ def _validate(config: Config) -> None:
     Validate the configuration.
     """
     for name in config.sections:
-        if name not in SECTION_HANDLERS:
+        if section_namespace(name) is None:
             raise ConfigError(f"Unknown configuration section {name!r}")
 
 
@@ -185,31 +148,20 @@ def load_config(path: Path) -> Config:
     return _build_config(interpolate_env(data))
 
 
-def _interpret_sections(
-    config: Config, context: BuildContext, device: bool
-) -> None:
-    """
-    Interpret the configuration sections of one kind.
-    """
-    for name, data in config.sections.items():
-        if is_device_section(name) != device:
-            continue
-        handler = SECTION_HANDLERS.get(name)
-        if handler is None:
-            raise ConfigError(f"Unknown configuration section {name!r}")
-        handler(data, context)
-
-
 def setup_from_config(app: web.Application, config: Config) -> None:
     """
     Set up the deck from the configuration.
 
-    Device sections (the streamdeck) are interpreted after the support
-    sections, since they consume the built context.
+    The device integrations (e.g. the streamdeck) are started first;
+    they request the integrations they need, which interpret their own
+    configuration and start themselves.
     """
     context = BuildContext(
         app=app, controller=app["deck_controller"], config=config
     )
 
-    _interpret_sections(config, context, device=False)
-    _interpret_sections(config, context, device=True)
+    for name in config.sections:
+        if is_device_section(name):
+            namespace = section_namespace(name)
+            if namespace is not None:
+                context.request(namespace)

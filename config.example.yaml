@@ -5,7 +5,7 @@
 # ${VAR} syntax; set them in your shell or in the systemd unit.
 #
 # The key and dial numbers are the map indices; each number may be
-# claimed only once across the keys map and the Google Meet phases.
+# claimed only once across the keys map.
 
 streamdeck:
   theme: dracula
@@ -33,6 +33,28 @@ streamdeck:
     3:
       type: ha.entity
       entity_id: switch.garage
+    4:
+      type: google_meet.tile
+      action: mic
+    5:
+      type: google_meet.tile
+      action: camera
+    6:
+      type: google_meet.phased_tile
+      phases:
+        lobby: start-next
+        green_room: home
+        green_room_switch: switch
+        meeting: hand
+        exit_hall: rejoin
+    7:
+      type: google_meet.phased_tile
+      phases:
+        lobby: start-instant
+        green_room: enter
+        green_room_switch: enter
+        meeting: hangup
+        exit_hall: home
 
 home_assistant:
   url: wss://homeassistant.local/api/websocket
@@ -52,25 +74,3 @@ pulseaudio:
   input_weights: []
 
 google_meet:
-  phases:
-    lobby:
-      6: start-next
-      7: start-instant
-    greenRoom:
-      4: mic
-      5: camera
-      6: home
-      7: enter
-    greenRoomSwitch:
-      4: mic
-      5: camera
-      6: switch
-      7: enter
-    meeting:
-      4: mic
-      5: camera
-      6: hand
-      7: hangup
-    exitHall:
-      6: rejoin
-      7: home

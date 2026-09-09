@@ -107,7 +107,10 @@ def _build_config(data: dict[str, Any]) -> Config:
     Build the config model from the parsed YAML.
     """
     for name, value in data.items():
-        if not isinstance(value, dict):
+        if value is None:
+            # An empty section (e.g. ``google_meet:``) is valid.
+            data[name] = {}
+        elif not isinstance(value, dict):
             raise ConfigError(f"Section {name!r} must be a mapping")
 
     config = Config(sections=data)

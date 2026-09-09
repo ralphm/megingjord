@@ -4,38 +4,43 @@
 Tests for L{megingjord.google_meet}.
 """
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from aiohttp import web
 
 from megingjord.color_utils import get_colors
-from megingjord.google_meet import GoogleMeetActionKey, GoogleMeetCoordinator
+from megingjord.google_meet import GoogleMeetCoordinator, GoogleMeetTile
 from megingjord.streamdeck import DeckController
 
 pytestmark = pytest.mark.filterwarnings("ignore::aiohttp.web.NotAppKeyWarning")
 
 
-def make_key(phase: str | None, control: str = "home") -> GoogleMeetActionKey:
+def make_tile(
+    phase: str | None,
+    action: str | None = None,
+    phases: dict[str, str] | None = None,
+) -> GoogleMeetTile:
     """
-    A Google Meet action key with a mocked controller and deck.
+    A Google Meet tile with a mocked controller and deck.
     """
     app = web.Application()
     app["colors"] = get_colors("default")
     controller = DeckController(app)
     controller.deck = MagicMock()
     controller.renderer = AsyncMock()
-    coordinator = GoogleMeetCoordinator(app, controller, {})
+    coordinator = GoogleMeetCoordinator(app)
     coordinator.phase = phase
-    key = GoogleMeetActionKey(0, coordinator, control)
-    key.controller = controller
-    key.deck = MagicMock()
-    return key
+    tile = GoogleMeetTile(0, coordinator, action=action, phases=phases)
+    tile.controller = controller
+    tile.deck = MagicMock()
+    tile.connected = True
+    return tile
 
 
-class TestGoogleMeetActionKey:
+class TestGoogleMeetTile:
     """
-    Tests for L{megingjord.google_meet.GoogleMeetActionKey}.
+    Tests for L{megingjord.google_meet.GoogleMeetTile}.
     """
 
     @pytest.mark.asyncio
@@ -43,9 +48,9 @@ class TestGoogleMeetActionKey:
         """
         The home tile uses google-meet-secondary in the Green Room.
         """
-        key = make_key("greenRoom")
-        await key._draw()
-        key.controller.renderer.draw_state_tile.assert_awaited_once_with(
+        tile = make_tile("green_room", action="home")
+        await tile._draw()
+        tile.controller.renderer.draw_state_tile.assert_awaited_once_with(
             title="Home",
             subtitle=None,
             colors={
@@ -60,9 +65,9 @@ class TestGoogleMeetActionKey:
         """
         The home tile uses google-meet-active in other phases.
         """
-        key = make_key("meeting")
-        await key._draw()
-        key.controller.renderer.draw_state_tile.assert_awaited_once_with(
+        tile = make_tile("meeting", action="home")
+        await tile._draw()
+        tile.controller.renderer.draw_state_tile.assert_awaited_once_with(
             title="Home",
             subtitle=None,
             colors={
@@ -77,9 +82,9 @@ class TestGoogleMeetActionKey:
         """
         Other controls keep their color in the Green Room.
         """
-        key = make_key("greenRoom", control="hangup")
-        await key._draw()
-        key.controller.renderer.draw_state_tile.assert_awaited_once_with(
+        tile = make_tile("green_room", action="hangup")
+        await tile._draw()
+        tile.controller.renderer.draw_state_tile.assert_awaited_once_with(
             title="Leave call",
             subtitle=None,
             colors={
@@ -94,9 +99,9 @@ class TestGoogleMeetActionKey:
         """
         The switch tile uses its action key colors and icon.
         """
-        key = make_key("greenRoomSwitch", control="switch")
-        await key._draw()
-        key.controller.renderer.draw_state_tile.assert_awaited_once_with(
+        tile = make_tile("green_room_switch", action="switch")
+        await tile._draw()
+        tile.controller.renderer.draw_state_tile.assert_awaited_once_with(
             title="Switch here",
             subtitle=None,
             colors={
@@ -105,3 +110,167 @@ class TestGoogleMeetActionKey:
             },
             icon="video-switch-outline",
         )
+
+    @pytest.mark.asyncio
+    async def test_blank_when_disconnected(self) -> None:
+        """
+        A tile renders blank while the websocket is not connected.
+        """
+        tile = make_tile("meeting", action="hangup")
+        tile.connected = False
+        await tile._draw()
+        tile.deck.set_key_image.assert_called_once_with(0, None)
+        tile.controller.renderer.draw_state_tile.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_blank_when_no_action_for_phase(self) -> None:
+        """
+        A phased tile renders blank when the current phase has no
+        action.
+        """
+        tile = make_tile("lobby", phases={"meeting": "hangup"})
+        await tile._draw()
+        tile.deck.set_key_image.assert_called_once_with(0, None)
+        tile.controller.renderer.draw_state_tile.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_phased_tile_action_switches(self) -> None:
+        """
+        A phased tile uses the action for the current phase.
+        """
+        tile = make_tile(
+            "meeting", phases={"lobby": "home", "meeting": "hangup"}
+        )
+        await tile._draw()
+        tile.controller.renderer.draw_state_tile.assert_awaited_once_with(
+            title="Leave call",
+            subtitle=None,
+            colors={
+                "tile-bg": "google-meet-hangup-bg",
+                "icon-primary": "google-meet-hangup-icon",
+            },
+            icon="phone-hangup",
+        )
+
+    @pytest.mark.asyncio
+    async def test_mute_tile_not_ready(self) -> None:
+        """
+        A mute tile renders the not-ready state until the state
+        arrives.
+        """
+        tile = make_tile("meeting", action="mic")
+        await tile._draw()
+        tile.controller.renderer.draw_state_tile.assert_awaited_once_with(
+            title="mic",
+            subtitle=None,
+            colors={
+                "tile-fg": "google-meet-fg",
+                "tile-bg": "tile-inactive-bg",
+                "icon-primary": "icon-inactive",
+            },
+            icon="microphone-off",
+        )
+
+    @pytest.mark.asyncio
+    async def test_mute_tile_state(self) -> None:
+        """
+        A mute tile renders the muted state.
+        """
+        tile = make_tile("meeting", action="mic")
+        tile.muted = True
+        await tile._draw()
+        tile.controller.renderer.draw_state_tile.assert_awaited_once_with(
+            title="mic",
+            subtitle=None,
+            colors={
+                "tile-fg": "google-meet-fg",
+                "tile-bg": "google-meet-muted-bg",
+                "icon-primary": "google-meet-muted-icon",
+            },
+            icon="microphone-off",
+        )
+
+    @pytest.mark.asyncio
+    async def test_phase_event_updates_action(self) -> None:
+        """
+        A phase event switches the phased tile's action.
+        """
+        tile = make_tile(
+            "lobby", phases={"lobby": "home", "meeting": "hangup"}
+        )
+        tile.meet.phase = "meeting"
+        await tile.handle_event({"event": "phase", "phase": "meeting"})
+        assert tile.current_action == "hangup"
+        tile.controller.renderer.draw_state_tile.assert_awaited_once_with(
+            title="Leave call",
+            subtitle=None,
+            colors={
+                "tile-bg": "google-meet-hangup-bg",
+                "icon-primary": "google-meet-hangup-icon",
+            },
+            icon="phone-hangup",
+        )
+
+    @pytest.mark.asyncio
+    async def test_muted_event_updates_tile(self) -> None:
+        """
+        A muted state event updates the matching mute tile.
+        """
+        tile = make_tile("meeting", action="mic")
+        await tile.handle_event({"event": "micMutedState", "muted": True})
+        assert tile.muted is True
+        tile.controller.renderer.draw_state_tile.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_muted_event_ignored_for_other_action(self) -> None:
+        """
+        A muted state event is ignored by tiles with another action.
+        """
+        tile = make_tile("meeting", action="hangup")
+        await tile.handle_event({"event": "micMutedState", "muted": True})
+        assert tile.muted is None
+        tile.controller.renderer.draw_state_tile.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_enter_ready_event(self) -> None:
+        """
+        The enterReady event updates the enter tile.
+        """
+        tile = make_tile("green_room", action="enter")
+        await tile.handle_event({"event": "enterReady", "ready": False})
+        assert tile.ready is False
+
+    @pytest.mark.asyncio
+    async def test_has_next_meeting_event(self) -> None:
+        """
+        The hasNextMeeting event updates the start-next tile.
+        """
+        tile = make_tile("lobby", action="start-next")
+        await tile.handle_event(
+            {"event": "hasNextMeeting", "hasNextMeeting": False}
+        )
+        assert tile.available is False
+
+    @pytest.mark.asyncio
+    async def test_key_press_sends_event(self) -> None:
+        """
+        Pressing an action tile sends its event to the extension.
+        """
+        tile = make_tile("meeting", action="hangup")
+        with patch.object(
+            GoogleMeetCoordinator, "send_event", new=AsyncMock()
+        ) as send:
+            await tile.on_key_change(True)
+        send.assert_awaited_once_with({"event": "leaveCall"})
+
+    @pytest.mark.asyncio
+    async def test_key_press_blank_ignored(self) -> None:
+        """
+        Pressing a blank tile does nothing.
+        """
+        tile = make_tile("lobby", phases={"meeting": "hangup"})
+        with patch.object(
+            GoogleMeetCoordinator, "send_event", new=AsyncMock()
+        ) as send:
+            await tile.on_key_change(True)
+        send.assert_not_awaited()

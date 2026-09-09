@@ -3,9 +3,13 @@
 """
 YAML configuration loading.
 
-The configuration drives the whole deck setup: theme, dials, keys, and
-the coordinators (PulseAudio, Home Assistant, Google Meet). Secrets are
-injected from environment variables with ``${VAR}`` placeholders.
+The configuration drives the whole deck setup. The ``streamdeck``
+section is the host: theme, dials and keys. The other sections belong
+to integrations, which are imported on demand when their namespace is
+referenced by a dial or key type or their section is present. Each
+integration interprets its own section and registers its types in the
+registry. Secrets are injected from environment variables with
+``${VAR}`` placeholders.
 """
 
 from __future__ import annotations
@@ -17,16 +21,17 @@ from typing import Any
 
 import yaml
 from aiohttp import web
-from attrs import asdict, define, field
+from attrs import define, field
 
-# Imported for their config type registration side effects.
-from . import ha as _ha_module  # noqa: F401
-from . import pulseaudio as _pulseaudio_module  # noqa: F401
-from . import streamdeck as _streamdeck_module  # noqa: F401
-from .google_meet import GoogleMeetCoordinator
-from .ha import HAWebSocketClient
-from .pulseaudio import PulseAudioCoordinator
-from .registry import DIAL_TYPES, KEY_TYPES, BuildContext, ConfigError
+from .registry import (
+    DIAL_TYPES,
+    INTEGRATIONS,
+    KEY_TYPES,
+    SECTION_HANDLERS,
+    BuildContext,
+    ConfigError,
+    load_integration,
+)
 
 __all__ = [
     "Config",
@@ -90,37 +95,6 @@ def interpolate_env(value: Any) -> Any:
 
 
 @define
-class HomeAssistantConfig:
-    """
-    Home Assistant WebSocket client configuration.
-    """
-
-    url: str
-    token: str
-
-
-@define
-class WeightConfig:
-    """
-    A PulseAudio output or input weight rule.
-    """
-
-    card: dict[str, Any] | None = None
-    port: dict[str, Any] | None = None
-    weight: int = 0
-
-
-@define
-class PulseAudioConfig:
-    """
-    PulseAudio coordinator configuration.
-    """
-
-    output_weights: list[WeightConfig] = field(factory=list)
-    input_weights: list[WeightConfig] = field(factory=list)
-
-
-@define
 class DialConfig:
     """
     A dial registration.
@@ -144,68 +118,86 @@ class KeyConfig:
 
 
 @define
-class GoogleMeetConfig:
+class StreamDeckConfig:
     """
-    Google Meet coordinator configuration.
+    The host configuration: theme, dials and keys.
     """
 
-    phases: dict[str, dict[int, str]]
+    theme: str = "default"
+    dials: dict[int, DialConfig] = field(factory=dict)
+    keys: dict[int, KeyConfig] = field(factory=dict)
 
 
 @define
 class Config:
     """
     The full deck configuration.
+
+    The integration sections are kept as raw mappings; each
+    integration interprets its own section via the registry.
     """
 
-    theme: str = "default"
-    home_assistant: HomeAssistantConfig | None = None
-    pulseaudio: PulseAudioConfig | None = None
-    dials: dict[int, DialConfig] = field(factory=dict)
-    keys: dict[int, KeyConfig] = field(factory=dict)
-    google_meet: GoogleMeetConfig | None = None
+    streamdeck: StreamDeckConfig = field(factory=StreamDeckConfig)
+    sections: dict[str, dict[str, Any]] = field(factory=dict)
+
+
+def _referenced_namespaces(config: Config) -> set[str]:
+    """
+    The integration namespaces referenced by types and sections.
+    """
+    namespaces: set[str] = set()
+
+    for dial_config in config.streamdeck.dials.values():
+        if "." in dial_config.type:
+            namespaces.add(dial_config.type.partition(".")[0])
+
+    for key_config in config.streamdeck.keys.values():
+        if "." in key_config.type:
+            namespaces.add(key_config.type.partition(".")[0])
+
+    for name in config.sections:
+        for namespace, sections in INTEGRATIONS.items():
+            if name in sections:
+                namespaces.add(namespace)
+
+    return namespaces
+
+
+def _load_integrations(config: Config) -> None:
+    """
+    Import the host and the integrations referenced by the config.
+    """
+    load_integration("streamdeck")
+    for namespace in _referenced_namespaces(config):
+        load_integration(namespace)
 
 
 def _build_config(data: dict[str, Any]) -> Config:
     """
     Build the config model from the parsed YAML.
     """
-    home_assistant = None
-    if "home_assistant" in data:
-        home_assistant = HomeAssistantConfig(**data["home_assistant"])
-
-    pulseaudio = None
-    if "pulseaudio" in data:
-        pulseaudio = PulseAudioConfig(
-            output_weights=[
-                WeightConfig(**weight)
-                for weight in data["pulseaudio"].get("output_weights", [])
-            ],
-            input_weights=[
-                WeightConfig(**weight)
-                for weight in data["pulseaudio"].get("input_weights", [])
-            ],
-        )
-
-    google_meet = None
-    if "google_meet" in data:
-        google_meet = GoogleMeetConfig(phases=data["google_meet"]["phases"])
+    streamdeck_data = data.get("streamdeck", {})
+    if not isinstance(streamdeck_data, dict):
+        raise ConfigError("The streamdeck section must be a mapping")
 
     config = Config(
-        theme=data.get("theme", "default"),
-        home_assistant=home_assistant,
-        pulseaudio=pulseaudio,
-        dials={
-            key: DialConfig(**value)
-            for key, value in data.get("dials", {}).items()
+        streamdeck=StreamDeckConfig(
+            theme=streamdeck_data.get("theme", "default"),
+            dials={
+                key: DialConfig(**value)
+                for key, value in streamdeck_data.get("dials", {}).items()
+            },
+            keys={
+                key: KeyConfig(**value)
+                for key, value in streamdeck_data.get("keys", {}).items()
+            },
+        ),
+        sections={
+            name: value for name, value in data.items() if name != "streamdeck"
         },
-        keys={
-            key: KeyConfig(**value)
-            for key, value in data.get("keys", {}).items()
-        },
-        google_meet=google_meet,
     )
 
+    _load_integrations(config)
     _validate(config)
     return config
 
@@ -218,26 +210,30 @@ def _validate(config: Config) -> None:
     at a time), so they may share key numbers with each other; they
     must not collide with the statically registered keys.
     """
+    for name in config.sections:
+        if name not in SECTION_HANDLERS:
+            raise ConfigError(f"Unknown configuration section {name!r}")
+
+    phases = config.sections.get("google_meet", {}).get("phases", {})
     claimed: dict[int, str] = {}
-    for key in config.keys:
+    for key in config.streamdeck.keys:
         claimed[key] = f"keys[{key}]"
 
-    if config.google_meet:
-        for phase, phase_keys in config.google_meet.phases.items():
-            for key in phase_keys:
-                if key in claimed:
-                    raise ConfigError(
-                        f"Key {key} claimed by both {claimed[key]} and "
-                        f"google_meet.phases.{phase}"
-                    )
+    for phase, phase_keys in phases.items():
+        for key in phase_keys:
+            if key in claimed:
+                raise ConfigError(
+                    f"Key {key} claimed by both {claimed[key]} and "
+                    f"google_meet.phases.{phase}"
+                )
 
-    for dial, dial_config in config.dials.items():
+    for dial, dial_config in config.streamdeck.dials.items():
         if dial_config.type not in DIAL_TYPES:
             raise ConfigError(
                 f"dials[{dial}]: unknown type {dial_config.type!r}"
             )
 
-    for key, key_config in config.keys.items():
+    for key, key_config in config.streamdeck.keys.items():
         if key_config.type not in KEY_TYPES:
             raise ConfigError(f"keys[{key}]: unknown type {key_config.type!r}")
 
@@ -269,33 +265,18 @@ def setup_from_config(app: web.Application, config: Config) -> None:
     """
     Set up the deck from the configuration.
     """
-    app["color_theme"] = config.theme
+    app["color_theme"] = config.streamdeck.theme
 
     controller = app["deck_controller"]
+    context = BuildContext(app=app, controller=controller)
 
-    pulse = None
-    if config.pulseaudio:
-        pulse = PulseAudioCoordinator(
-            app,
-            output_weights=[
-                asdict(weight) for weight in config.pulseaudio.output_weights
-            ],
-            input_weights=[
-                asdict(weight) for weight in config.pulseaudio.input_weights
-            ],
-        )
+    for name, data in config.sections.items():
+        handler = SECTION_HANDLERS.get(name)
+        if handler is None:
+            raise ConfigError(f"Unknown configuration section {name!r}")
+        handler(data, context)
 
-    ha = None
-    if config.home_assistant:
-        ha = HAWebSocketClient(
-            app,
-            url=config.home_assistant.url,
-            token=config.home_assistant.token,
-        )
-
-    context = BuildContext(app=app, pulse=pulse, ha=ha)
-
-    for dial, dial_config in config.dials.items():
+    for dial, dial_config in config.streamdeck.dials.items():
         builder = DIAL_TYPES.get(dial_config.type)
         if builder is None:
             raise ConfigError(
@@ -303,11 +284,8 @@ def setup_from_config(app: web.Application, config: Config) -> None:
             )
         controller.register_dial(builder(dial, dial_config, context))
 
-    for key, key_config in config.keys.items():
+    for key, key_config in config.streamdeck.keys.items():
         builder = KEY_TYPES.get(key_config.type)
         if builder is None:
             raise ConfigError(f"keys[{key}]: unknown type {key_config.type!r}")
         controller.register_key(builder(key, key_config, context))
-
-    if config.google_meet:
-        GoogleMeetCoordinator(app, controller, config.google_meet.phases)

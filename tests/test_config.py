@@ -11,7 +11,6 @@ import pytest
 from aiohttp import web
 
 from megingjord.config import ConfigError, load_config, setup_from_config
-from megingjord.pulseaudio import PulseDefaultSinkDial
 from megingjord.streamdeck import BrightnessDial
 
 pytestmark = pytest.mark.filterwarnings("ignore::aiohttp.web.NotAppKeyWarning")
@@ -31,6 +30,25 @@ class TestLoadConfig:
     Tests for L{megingjord.config.load_config}.
     """
 
+    def test_lazy_integration_loading(self, tmp_path: Path) -> None:
+        """
+        A config referencing only the host loads no integrations.
+        """
+        from megingjord.registry import _loaded_integrations
+
+        load_config(
+            write_config(
+                tmp_path,
+                """
+streamdeck:
+  dials:
+    1:
+      type: brightness
+""",
+            )
+        )
+        assert _loaded_integrations == {"streamdeck"}
+
     def test_minimal(self, tmp_path: Path) -> None:
         """
         A minimal config loads with defaults.
@@ -39,16 +57,16 @@ class TestLoadConfig:
             write_config(
                 tmp_path,
                 """
-theme: dracula
-
-dials:
-  1:
-    type: brightness
+streamdeck:
+  theme: dracula
+  dials:
+    1:
+      type: brightness
 """,
             )
         )
-        assert config.theme == "dracula"
-        assert config.dials[1].type == "brightness"
+        assert config.streamdeck.theme == "dracula"
+        assert config.streamdeck.dials[1].type == "brightness"
 
     def test_env_interpolation(self, tmp_path: Path, monkeypatch) -> None:
         """
@@ -59,14 +77,17 @@ dials:
             write_config(
                 tmp_path,
                 """
+streamdeck:
+  dials:
+    1:
+      type: brightness
 home_assistant:
   url: wss://example.test/api/websocket
   token: ${HA_TOKEN}
 """,
             )
         )
-        assert config.home_assistant is not None
-        assert config.home_assistant.token == "secret"
+        assert config.sections["home_assistant"]["token"] == "secret"
 
     def test_missing_env_var(self, tmp_path: Path, monkeypatch) -> None:
         """
@@ -78,6 +99,10 @@ home_assistant:
                 write_config(
                     tmp_path,
                     """
+streamdeck:
+  dials:
+    1:
+      type: brightness
 home_assistant:
   url: wss://example.test/api/websocket
   token: ${HA_TOKEN}
@@ -94,11 +119,12 @@ home_assistant:
                 write_config(
                     tmp_path,
                     """
-dials:
-  1:
-    type: brightness
-  1:
-    type: brightness
+streamdeck:
+  dials:
+    1:
+      type: brightness
+    1:
+      type: brightness
 """,
                 )
             )
@@ -112,10 +138,11 @@ dials:
                 write_config(
                     tmp_path,
                     """
-keys:
-  4:
-    type: ha.entity
-    entity_id: light.test
+streamdeck:
+  keys:
+    4:
+      type: ha.entity
+      entity_id: light.test
 google_meet:
   phases:
     meeting:
@@ -132,6 +159,10 @@ google_meet:
             write_config(
                 tmp_path,
                 """
+streamdeck:
+  dials:
+    1:
+      type: brightness
 google_meet:
   phases:
     lobby:
@@ -141,9 +172,9 @@ google_meet:
 """,
             )
         )
-        assert config.google_meet is not None
-        assert config.google_meet.phases["lobby"][6] == "start-next"
-        assert config.google_meet.phases["greenRoom"][6] == "home"
+        phases = config.sections["google_meet"]["phases"]
+        assert phases["lobby"][6] == "start-next"
+        assert phases["greenRoom"][6] == "home"
 
     def test_unknown_dial_type(self, tmp_path: Path) -> None:
         """
@@ -154,18 +185,83 @@ google_meet:
                 write_config(
                     tmp_path,
                     """
-dials:
-  1:
-    type: bogus
+streamdeck:
+  dials:
+    1:
+      type: bogus
 """,
                 )
             )
 
-    def test_registered_types(self) -> None:
+    def test_unknown_integration(self, tmp_path: Path) -> None:
+        """
+        A type with an unknown namespace is rejected.
+        """
+        with pytest.raises(ConfigError, match="Unknown integration"):
+            load_config(
+                write_config(
+                    tmp_path,
+                    """
+streamdeck:
+  dials:
+    1:
+      type: bogus.entity
+""",
+                )
+            )
+
+    def test_unknown_section(self, tmp_path: Path) -> None:
+        """
+        An unknown configuration section is rejected.
+        """
+        with pytest.raises(ConfigError, match="Unknown configuration section"):
+            load_config(
+                write_config(
+                    tmp_path,
+                    """
+streamdeck:
+  dials:
+    1:
+      type: brightness
+bogus:
+  foo: bar
+""",
+                )
+            )
+
+    def test_registered_types(self, tmp_path: Path) -> None:
         """
         The integrations register their dial and key types.
         """
-        from megingjord.registry import DIAL_TYPES, KEY_TYPES
+        from megingjord.registry import DIAL_TYPES, KEY_TYPES, SECTION_HANDLERS
+
+        load_config(
+            write_config(
+                tmp_path,
+                """
+streamdeck:
+  dials:
+    0:
+      type: pulseaudio.sink
+    1:
+      type: brightness
+  keys:
+    0:
+      type: ha.entity
+      entity_id: light.test
+home_assistant:
+  url: wss://example.test/api/websocket
+  token: secret
+pulseaudio:
+  output_weights: []
+  input_weights: []
+google_meet:
+  phases:
+    lobby:
+      6: start-next
+""",
+            )
+        )
 
         assert "brightness" in DIAL_TYPES
         assert "pulseaudio.sink" in DIAL_TYPES
@@ -175,6 +271,9 @@ dials:
         assert "ha.entity" in KEY_TYPES
         assert "ha.alarm" in KEY_TYPES
         assert "pulseaudio.sink" in KEY_TYPES
+        assert "home_assistant" in SECTION_HANDLERS
+        assert "pulseaudio" in SECTION_HANDLERS
+        assert "google_meet" in SECTION_HANDLERS
 
 
 class TestExampleConfig:
@@ -190,10 +289,9 @@ class TestExampleConfig:
         monkeypatch.setenv("BUSYBAR_TOKEN", "example")
         example = Path(__file__).parent.parent / "config.example.yaml"
         config = load_config(example)
-        assert config.theme == "dracula"
-        assert config.home_assistant is not None
-        assert config.google_meet is not None
-        assert "greenRoomSwitch" in config.google_meet.phases
+        assert config.streamdeck.theme == "dracula"
+        assert "home_assistant" in config.sections
+        assert "greenRoomSwitch" in config.sections["google_meet"]["phases"]
 
 
 class TestSetupFromConfig:
@@ -219,10 +317,11 @@ class TestSetupFromConfig:
             write_config(
                 tmp_path,
                 """
-keys:
-  0:
-    type: ha.entity
-    entity_id: light.test
+streamdeck:
+  keys:
+    0:
+      type: ha.entity
+      entity_id: light.test
 """,
             )
         )
@@ -237,12 +336,13 @@ keys:
             write_config(
                 tmp_path,
                 """
+streamdeck:
+  keys:
+    0:
+      type: ha.entity
 home_assistant:
   url: wss://example.test/api/websocket
   token: secret
-keys:
-  0:
-    type: ha.entity
 """,
             )
         )
@@ -257,29 +357,30 @@ keys:
             write_config(
                 tmp_path,
                 """
-theme: dracula
+streamdeck:
+  theme: dracula
+  dials:
+    0:
+      type: pulseaudio.sink
+    1:
+      type: brightness
+    2:
+      type: ha.entity
+      entity_id: light.test
+  keys:
+    0:
+      type: ha.alarm
+      entity_id: alarm_control_panel.home
+      arm_service: alarm_arm_night
+    1:
+      type: ha.entity
+      entity_id: light.test
 home_assistant:
   url: wss://example.test/api/websocket
   token: secret
 pulseaudio:
   output_weights: []
   input_weights: []
-dials:
-  0:
-    type: pulseaudio.sink
-  1:
-    type: brightness
-  2:
-    type: ha.entity
-    entity_id: light.test
-keys:
-  0:
-    type: ha.alarm
-    entity_id: alarm_control_panel.home
-    arm_service: alarm_arm_night
-  1:
-    type: ha.entity
-    entity_id: light.test
 google_meet:
   phases:
     lobby:
@@ -293,6 +394,8 @@ google_meet:
         assert app["color_theme"] == "dracula"
         assert controller.register_dial.call_count == 3
         assert controller.register_key.call_count == 2
+        from megingjord.pulseaudio import PulseDefaultSinkDial
+
         dials = [
             call.args[0] for call in controller.register_dial.call_args_list
         ]

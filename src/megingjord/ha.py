@@ -28,6 +28,7 @@ from .registry import (
     ConfigError,
     register_dial_type,
     register_key_type,
+    register_section,
 )
 from .streamdeck import DeckController, ScrollerItem, ScrollerView
 
@@ -1502,6 +1503,26 @@ class HAAlarmDial:
         )
 
 
+@define
+class HomeAssistantConfig:
+    """
+    Home Assistant WebSocket client configuration.
+    """
+
+    url: str
+    token: str
+
+
+def _build_home_assistant(data: dict[str, Any], context: BuildContext) -> None:
+    """
+    Build the Home Assistant client from its configuration section.
+    """
+    config = HomeAssistantConfig(**data)
+    context.ha = HAWebSocketClient(
+        app=context.app, url=config.url, token=config.token
+    )
+
+
 def _build_entity_dial(
     dial: int, config: Any, context: BuildContext
 ) -> HAEntityDial:
@@ -1567,6 +1588,7 @@ def _build_alarm_key(
     )
 
 
+register_section("home_assistant", _build_home_assistant)
 register_dial_type("ha.entity", _build_entity_dial)
 register_dial_type("ha.alarm", _build_alarm_dial)
 register_key_type("ha.entity", _build_entity_key)

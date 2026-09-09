@@ -18,6 +18,7 @@ from aiohttp import WSCloseCode, web
 from attrs import define, field
 from StreamDeck.Devices.StreamDeck import StreamDeck
 
+from .registry import BuildContext, register_section
 from .streamdeck import DeckController, Key
 
 logger = logging.getLogger(__name__)
@@ -477,3 +478,25 @@ class GoogleMeetCoordinator:
             raise BrokenPipeError("No active connection from the browser.")
 
         await self.socket.send_str(json.dumps(event))
+
+
+@define
+class GoogleMeetConfig:
+    """
+    Google Meet coordinator configuration.
+    """
+
+    phases: dict[str, dict[int, str]]
+
+
+def _build_google_meet(data: dict[str, Any], context: BuildContext) -> None:
+    """
+    Build the Google Meet coordinator from its configuration section.
+    """
+    config = GoogleMeetConfig(phases=data["phases"])
+    context.meet = GoogleMeetCoordinator(
+        context.app, context.controller, config.phases
+    )
+
+
+register_section("google_meet", _build_google_meet)

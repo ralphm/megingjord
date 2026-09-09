@@ -7,7 +7,32 @@
 # The key and dial numbers are the map indices; each number may be
 # claimed only once across the keys map and the Google Meet phases.
 
-theme: dracula
+streamdeck:
+  theme: dracula
+  dials:
+    0:
+      type: pulseaudio.sink
+    1:
+      type: brightness
+    2:
+      type: ha.entity
+      entity_id: light.living_room
+    3:
+      type: pulseaudio.source
+  keys:
+    0:
+      type: ha.alarm
+      entity_id: alarm_control_panel.home
+      arm_service: alarm_arm_night
+    1:
+      type: ha.entity
+      entity_id: light.living_room
+    2:
+      type: ha.entity
+      entity_id: light.kitchen
+    3:
+      type: ha.entity
+      entity_id: switch.garage
 
 home_assistant:
   url: wss://homeassistant.local/api/websocket
@@ -25,32 +50,6 @@ pulseaudio:
         name: headset-output
       weight: 10001
   input_weights: []
-
-dials:
-  0:
-    type: pulseaudio.sink
-  1:
-    type: brightness
-  2:
-    type: ha.entity
-    entity_id: light.living_room
-  3:
-    type: pulseaudio.source
-
-keys:
-  0:
-    type: ha.alarm
-    entity_id: alarm_control_panel.home
-    arm_service: alarm_arm_night
-  1:
-    type: ha.entity
-    entity_id: light.living_room
-  2:
-    type: ha.entity
-    entity_id: light.kitchen
-  3:
-    type: ha.entity
-    entity_id: switch.garage
 
 google_meet:
   phases:

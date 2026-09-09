@@ -13,7 +13,7 @@ from contextlib import suppress
 from typing import Any, AsyncIterator
 
 from aiohttp import web
-from attrs import define, field
+from attrs import asdict, define, field
 from PIL import Image
 from pulsectl import (
     PulseCardInfo,
@@ -31,6 +31,7 @@ from .registry import (
     ConfigError,
     register_dial_type,
     register_key_type,
+    register_section,
 )
 from .streamdeck import DeckController, ScrollerItem, ScrollerView
 
@@ -1095,6 +1096,46 @@ class PulseDefaultSourceDial:
         return image
 
 
+@define
+class WeightConfig:
+    """
+    A PulseAudio output or input weight rule.
+    """
+
+    card: dict[str, Any] | None = None
+    port: dict[str, Any] | None = None
+    weight: int = 0
+
+
+@define
+class PulseAudioConfig:
+    """
+    PulseAudio coordinator configuration.
+    """
+
+    output_weights: list[WeightConfig] = field(factory=list)
+    input_weights: list[WeightConfig] = field(factory=list)
+
+
+def _build_pulseaudio(data: dict[str, Any], context: BuildContext) -> None:
+    """
+    Build the PulseAudio coordinator from its configuration section.
+    """
+    config = PulseAudioConfig(
+        output_weights=[
+            WeightConfig(**weight) for weight in data.get("output_weights", [])
+        ],
+        input_weights=[
+            WeightConfig(**weight) for weight in data.get("input_weights", [])
+        ],
+    )
+    context.pulse = PulseAudioCoordinator(
+        context.app,
+        output_weights=[asdict(weight) for weight in config.output_weights],
+        input_weights=[asdict(weight) for weight in config.input_weights],
+    )
+
+
 def _build_sink_dial(
     dial: int, _config: Any, context: BuildContext
 ) -> PulseDefaultSinkDial:
@@ -1134,6 +1175,7 @@ def _build_sink_key(
     return PulseDefaultSinkKey(key, pulse=context.pulse)
 
 
+register_section("pulseaudio", _build_pulseaudio)
 register_dial_type("pulseaudio.sink", _build_sink_dial)
 register_dial_type("pulseaudio.source", _build_source_dial)
 register_key_type("pulseaudio.sink", _build_sink_key)

@@ -7,8 +7,9 @@ Type=simple
 ExecStart=%h/.local/bin/megingjord
 Restart=on-failure
 # Secrets are read from the environment; set them here or in an
-# EnvironmentFile.
-Environment=HA_TOKEN=
+# EnvironmentFile. Do not set a variable to an empty value: the
+# config loader treats an unset variable as a clear error.
+# Environment=HA_TOKEN=
 # EnvironmentFile=%h/.config/megingjord/env
 
 [Install]

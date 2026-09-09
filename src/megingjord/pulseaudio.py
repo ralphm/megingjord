@@ -29,6 +29,7 @@ from StreamDeck.Devices.StreamDeck import StreamDeck
 from .registry import (
     BuildContext,
     ConfigError,
+    build_config,
     register_dial_type,
     register_key_type,
     register_section,
@@ -1123,10 +1124,12 @@ def _build_pulseaudio(data: dict[str, Any], context: BuildContext) -> None:
     """
     config = PulseAudioConfig(
         output_weights=[
-            WeightConfig(**weight) for weight in data.get("output_weights", [])
+            build_config(WeightConfig, f"output_weights[{index}]", weight)
+            for index, weight in enumerate(data.get("output_weights", []))
         ],
         input_weights=[
-            WeightConfig(**weight) for weight in data.get("input_weights", [])
+            build_config(WeightConfig, f"input_weights[{index}]", weight)
+            for index, weight in enumerate(data.get("input_weights", []))
         ],
     )
     context.pulseaudio = PulseAudioCoordinator(

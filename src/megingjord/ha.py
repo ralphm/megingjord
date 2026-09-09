@@ -26,6 +26,7 @@ from .color_utils import is_dark, rgb_to_hex, scale_rgb_down
 from .registry import (
     BuildContext,
     ConfigError,
+    build_config,
     register_dial_type,
     register_key_type,
     register_section,
@@ -1517,7 +1518,7 @@ def _build_home_assistant(data: dict[str, Any], context: BuildContext) -> None:
     """
     Build the Home Assistant client from its configuration section.
     """
-    config = HomeAssistantConfig(**data)
+    config = build_config(HomeAssistantConfig, "home_assistant", data)
     context.ha = HAWebSocketClient(
         app=context.app, url=config.url, token=config.token
     )

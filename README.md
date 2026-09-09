@@ -35,7 +35,7 @@ cp config.example.yaml ~/.config/megingjord/config.yaml
 $EDITOR ~/.config/megingjord/config.yaml
 ```
 
-Secrets (Home Assistant and BUSY Bar tokens) are read from environment
+Secrets (the Home Assistant token) are read from environment
 variables with the `${VAR}` syntax, so the config file itself contains
 no secrets:
 

@@ -24,6 +24,20 @@ class ConfigError(Exception):
     """
 
 
+def build_config(model: type, path: str, data: dict[str, Any]) -> Any:
+    """
+    Build a config model from a mapping, converting construction
+    errors to ConfigError with the config path.
+    """
+    try:
+        return model(**data)
+    except TypeError as exc:
+        message = str(exc)
+        if ".__init__() " in message:
+            message = message.partition(".__init__() ")[2]
+        raise ConfigError(f"{path}: {message}") from exc
+
+
 @define
 class BuildContext:
     """
@@ -86,8 +100,8 @@ class Integration:
 
 
 # Namespace -> integration. The module name equals the namespace.
-# Device integrations (streamdeck now, busy bar later) are interpreted
-# after the support integrations, since they consume the built context.
+# Device integrations (e.g. the streamdeck) are interpreted after the
+# support integrations, since they consume the built context.
 INTEGRATIONS: dict[str, Integration] = {
     "streamdeck": Integration(sections=("streamdeck",), device=True),
     "ha": Integration(sections=("home_assistant",)),

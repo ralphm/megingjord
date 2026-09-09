@@ -37,6 +37,8 @@ class TestLoadConfig:
         """
         from megingjord.registry import _loaded_integrations
 
+        _loaded_integrations.clear()
+
         config = load_config(
             write_config(
                 tmp_path,
@@ -246,7 +248,6 @@ class TestExampleConfig:
         The example config loads with placeholder secrets.
         """
         monkeypatch.setenv("HA_TOKEN", "example")
-        monkeypatch.setenv("BUSYBAR_TOKEN", "example")
         example = Path(__file__).parent.parent / "config.example.yaml"
         config = load_config(example)
         assert config.sections["streamdeck"]["theme"] == "dracula"
@@ -348,6 +349,101 @@ google_meet:
             )
         )
         with pytest.raises(ConfigError, match="claimed by both"):
+            setup_from_config(self.make_app(), config)
+
+    def test_missing_dial_type(self, tmp_path: Path) -> None:
+        """
+        A dial without a type is rejected with the config path.
+        """
+        config = load_config(
+            write_config(
+                tmp_path,
+                """
+streamdeck:
+  dials:
+    0: {}
+""",
+            )
+        )
+        with pytest.raises(ConfigError, match=r"dials\[0\]"):
+            setup_from_config(self.make_app(), config)
+
+    def test_unknown_home_assistant_field(self, tmp_path: Path) -> None:
+        """
+        An unknown home_assistant field is rejected with the config
+        path.
+        """
+        config = load_config(
+            write_config(
+                tmp_path,
+                """
+streamdeck:
+  keys:
+    0:
+      type: ha.entity
+      entity_id: light.test
+home_assistant:
+  url: wss://example.test/api/websocket
+  token: secret
+  bogus_field: x
+""",
+            )
+        )
+        with pytest.raises(ConfigError, match="home_assistant"):
+            setup_from_config(self.make_app(), config)
+
+    def test_google_meet_requires_phases(self, tmp_path: Path) -> None:
+        """
+        A google_meet section without phases is rejected.
+        """
+        config = load_config(
+            write_config(
+                tmp_path,
+                """
+streamdeck:
+  keys:
+    0:
+      type: ha.entity
+      entity_id: light.test
+google_meet:
+  foo: bar
+""",
+            )
+        )
+        with pytest.raises(ConfigError, match="missing 'phases'"):
+            setup_from_config(self.make_app(), config)
+
+    def test_unknown_theme(self, tmp_path: Path) -> None:
+        """
+        An unknown theme is rejected.
+        """
+        config = load_config(
+            write_config(
+                tmp_path,
+                """
+streamdeck:
+  theme: nonexistent
+""",
+            )
+        )
+        with pytest.raises(ConfigError, match="unknown theme"):
+            setup_from_config(self.make_app(), config)
+
+    def test_dials_must_be_mapping(self, tmp_path: Path) -> None:
+        """
+        A non-mapping dials section is rejected.
+        """
+        config = load_config(
+            write_config(
+                tmp_path,
+                """
+streamdeck:
+  dials:
+    - brightness
+""",
+            )
+        )
+        with pytest.raises(ConfigError, match="'dials' must be a mapping"):
             setup_from_config(self.make_app(), config)
 
     def test_unknown_dial_type(self, tmp_path: Path) -> None:

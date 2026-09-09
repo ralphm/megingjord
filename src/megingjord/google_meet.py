@@ -18,7 +18,7 @@ from aiohttp import WSCloseCode, web
 from attrs import define, field
 from StreamDeck.Devices.StreamDeck import StreamDeck
 
-from .registry import BuildContext, register_section
+from .registry import BuildContext, ConfigError, register_section
 from .streamdeck import DeckController, Key
 
 logger = logging.getLogger(__name__)
@@ -493,7 +493,12 @@ def _build_google_meet(data: dict[str, Any], context: BuildContext) -> None:
     """
     Build the Google Meet coordinator from its configuration section.
     """
-    config = GoogleMeetConfig(phases=data["phases"])
+    phases = data.get("phases")
+    if phases is None:
+        raise ConfigError("google_meet: missing 'phases'")
+    if not isinstance(phases, dict):
+        raise ConfigError("google_meet: 'phases' must be a mapping")
+    config = GoogleMeetConfig(phases=phases)
     context.google_meet = GoogleMeetCoordinator(
         context.app, context.controller, config.phases
     )

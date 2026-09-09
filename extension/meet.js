@@ -37,19 +37,14 @@ function detectPhase() {
   return undefined;
 }
 
-// The URL changes before the new page renders; report the phase from
-// the URL immediately so the tiles react without waiting for the DOM.
-const MEETING_CODE_RE = /^\/[a-z]{3}-[a-z]{4}-[a-z]{3}$/;
-
+// The URL changes before the new page renders; report the lobby phase
+// from the URL immediately. Phase changes into a call are reported by
+// the command that caused them, since the URL cannot distinguish the
+// meeting from the green room.
 function phaseFromUrl() {
   const path = window.location.pathname;
   if (path === "/" || path === "/home" || path === "/landing") {
     return "lobby";
-  }
-  if (MEETING_CODE_RE.test(path)) {
-    // The user is entering a call; the DOM will refine the phase
-    // (meeting vs green room) once rendered.
-    return "meeting";
   }
   return undefined;
 }
@@ -213,9 +208,10 @@ const COMMANDS = {
   leaveCall: () => {
     // Some meetings ask to confirm leaving; a second press selects
     // "just leave the call".
-    if (!clickButton(LEAVE_CONFIRMATION_SELECTOR, "leave confirmation")) {
-      clickButton(LEAVE_SELECTOR, "leave");
-    }
+    return (
+      clickButton(LEAVE_CONFIRMATION_SELECTOR, "leave confirmation") ||
+      clickButton(LEAVE_SELECTOR, "leave")
+    );
   },
   startInstantMeeting: () =>
     clickButton(START_INSTANT_SELECTOR, "start instant meeting") ||
@@ -224,21 +220,23 @@ const COMMANDS = {
     const card = firstScheduledCard();
     if (card) {
       card.click();
-      return;
+      return true;
     }
     console.warn("Megingjord Meet: button not found: start next meeting");
+    return false;
   },
   enterMeeting: () => {
     const button = getJoinButton();
     if (!button) {
       console.warn("Megingjord Meet: button not found: join now");
-      return;
+      return false;
     }
     if (isDisabled(button)) {
       console.warn("Megingjord Meet: join button not ready");
-      return;
+      return false;
     }
     button.click();
+    return true;
   },
   switchHere: () => clickByText("Switch here"),
   rejoin: () => clickButton(REJOIN_SELECTOR, "rejoin") || clickByText("Rejoin"),
@@ -246,6 +244,19 @@ const COMMANDS = {
     clickButton(RETURN_HOME_SELECTOR, "return home") ||
     clickButton(RETURN_HOME_GREEN_ROOM_SELECTOR, "return home (green room)") ||
     clickByText("Return to home screen"),
+};
+
+// The phase a command leads to; reported immediately so the tiles
+// react without waiting for the page to render. The DOM-based
+// detection refines it once the page renders.
+const EXPECTED_PHASE = {
+  startInstantMeeting: "meeting",
+  startNextMeeting: "green_room",
+  enterMeeting: "meeting",
+  switchHere: "meeting",
+  leaveCall: "exit_hall",
+  rejoin: "meeting",
+  returnHome: "lobby",
 };
 
 let lastState = null;
@@ -301,8 +312,15 @@ browser.runtime.onMessage.addListener((message) => {
     sendState();
   } else if (message.type === "command") {
     const handler = COMMANDS[message.event];
-    if (handler) {
-      handler();
+    if (handler && handler()) {
+      const expected = EXPECTED_PHASE[message.event];
+      if (expected) {
+        lastState = { ...lastState, phase: expected };
+        browser.runtime.sendMessage({
+          type: "state",
+          state: { phase: expected },
+        });
+      }
       // Re-read state shortly after the click; Meet updates the DOM
       // asynchronously.
       setTimeout(sendState, 100);

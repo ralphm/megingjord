@@ -23,6 +23,14 @@ from PIL import Image
 from StreamDeck.Devices.StreamDeck import StreamDeck
 
 from .color_utils import is_dark, rgb_to_hex, scale_rgb_down
+from .registry import (
+    BuildContext,
+    ConfigError,
+    build_config,
+    register_dial_type,
+    register_key_type,
+    register_section,
+)
 from .streamdeck import DeckController, ScrollerItem, ScrollerView
 
 logger = logging.getLogger(__name__)
@@ -1494,3 +1502,95 @@ class HAAlarmDial:
         return await self.controller.renderer.draw_selection_dial(
             self.current_view, mini=mini
         )
+
+
+@define
+class HomeAssistantConfig:
+    """
+    Home Assistant WebSocket client configuration.
+    """
+
+    url: str
+    token: str
+
+
+def _build_home_assistant(data: dict[str, Any], context: BuildContext) -> None:
+    """
+    Build the Home Assistant client from its configuration section.
+    """
+    config = build_config(HomeAssistantConfig, "home_assistant", data)
+    context.ha = HAWebSocketClient(
+        app=context.app, url=config.url, token=config.token
+    )
+
+
+def _build_entity_dial(
+    dial: int, config: Any, context: BuildContext
+) -> HAEntityDial:
+    """
+    Build an HA entity dial.
+    """
+    if context.ha is None:
+        raise ConfigError(
+            f"dials[{dial}]: ha.entity requires a home_assistant section"
+        )
+    if config.entity_id is None:
+        raise ConfigError(f"dials[{dial}]: ha.entity requires entity_id")
+    return HAEntityDial(dial, context.ha, config.entity_id)
+
+
+def _build_alarm_dial(
+    dial: int, config: Any, context: BuildContext
+) -> HAAlarmDial:
+    """
+    Build an HA alarm dial.
+    """
+    if context.ha is None:
+        raise ConfigError(
+            f"dials[{dial}]: ha.alarm requires a home_assistant section"
+        )
+    if config.entity_id is None:
+        raise ConfigError(f"dials[{dial}]: ha.alarm requires entity_id")
+    return HAAlarmDial(dial, context.ha, config.entity_id)
+
+
+def _build_entity_key(
+    key: int, config: Any, context: BuildContext
+) -> HAEntityTile:
+    """
+    Build an HA entity key.
+    """
+    if context.ha is None:
+        raise ConfigError(
+            f"keys[{key}]: ha.entity requires a home_assistant section"
+        )
+    if config.entity_id is None:
+        raise ConfigError(f"keys[{key}]: ha.entity requires entity_id")
+    return HAEntityTile(key, context.ha, config.entity_id, icon=config.icon)
+
+
+def _build_alarm_key(
+    key: int, config: Any, context: BuildContext
+) -> HAAlarmTile:
+    """
+    Build an HA alarm key.
+    """
+    if context.ha is None:
+        raise ConfigError(
+            f"keys[{key}]: ha.alarm requires a home_assistant section"
+        )
+    if config.entity_id is None:
+        raise ConfigError(f"keys[{key}]: ha.alarm requires entity_id")
+    return HAAlarmTile(
+        key,
+        context.ha,
+        config.entity_id,
+        arm_service=config.arm_service or "alarm_arm_away",
+    )
+
+
+register_section("home_assistant", _build_home_assistant)
+register_dial_type("ha.entity", _build_entity_dial)
+register_dial_type("ha.alarm", _build_alarm_dial)
+register_key_type("ha.entity", _build_entity_key)
+register_key_type("ha.alarm", _build_alarm_key)

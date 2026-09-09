@@ -10,7 +10,7 @@ import asyncio
 import logging
 import math
 import time
-from typing import Awaitable, Callable, Protocol, Sequence
+from typing import Any, Awaitable, Callable, Protocol, Sequence
 
 from aiohttp import web
 from attrs import Attribute, define, field
@@ -20,6 +20,17 @@ from StreamDeck.Devices.StreamDeck import DialEventType, StreamDeck
 from StreamDeck.ImageHelpers.PILHelper import _to_native_format
 from StreamDeck.Transport.Transport import TransportError
 
+from .color_utils import COLOR_THEMES
+from .registry import (
+    DIAL_TYPES,
+    KEY_TYPES,
+    BuildContext,
+    ConfigError,
+    build_config,
+    register_dial_type,
+    register_section,
+    section_namespace,
+)
 from .render import Renderer
 
 # Key animation settings.
@@ -561,3 +572,113 @@ def set_touchscreen_tile_image(
     tile of the touchscreen.
     """
     deck.set_touchscreen_image(image, 220 * tile, 0, 140, 100)
+
+
+@define
+class DialConfig:
+    """
+    A dial registration.
+    """
+
+    type: str
+    entity_id: str | None = None
+    arm_service: str | None = None
+
+
+@define
+class KeyConfig:
+    """
+    A key registration.
+    """
+
+    type: str
+    entity_id: str | None = None
+    arm_service: str | None = None
+    icon: str | None = None
+
+
+def _build_streamdeck(data: dict[str, Any], context: BuildContext) -> None:
+    """
+    Build the deck from the streamdeck configuration section.
+    """
+    theme = data.get("theme", "default")
+    if theme not in COLOR_THEMES:
+        raise ConfigError(f"streamdeck: unknown theme {theme!r}")
+    context.app["color_theme"] = theme
+    controller = context.controller
+
+    dials_data = data.get("dials", {})
+    if not isinstance(dials_data, dict):
+        raise ConfigError("streamdeck: 'dials' must be a mapping")
+    dials = {
+        key: build_config(DialConfig, f"dials[{key}]", value)
+        for key, value in dials_data.items()
+    }
+    keys_data = data.get("keys", {})
+    if not isinstance(keys_data, dict):
+        raise ConfigError("streamdeck: 'keys' must be a mapping")
+    keys = {
+        key: build_config(KeyConfig, f"keys[{key}]", value)
+        for key, value in keys_data.items()
+    }
+
+    # Request the integrations this deck needs: those referenced by
+    # the dial and key types, and those with a configuration section
+    # (e.g. the Google Meet coordinator). Each requested integration
+    # interprets its own configuration and starts itself.
+    namespaces: set[str] = set()
+    for dial_config in dials.values():
+        if "." in dial_config.type:
+            namespaces.add(dial_config.type.partition(".")[0])
+    for key_config in keys.values():
+        if "." in key_config.type:
+            namespaces.add(key_config.type.partition(".")[0])
+    for name in context.config.sections:
+        namespace = section_namespace(name)
+        if namespace is not None:
+            namespaces.add(namespace)
+    for namespace in namespaces:
+        context.request(namespace)
+
+    # The Google Meet phases are alternative layouts (only one is
+    # active at a time), so they may share key numbers with each
+    # other; they must not collide with the statically registered keys.
+    phases = context.config.sections.get("google_meet", {}).get("phases", {})
+    claimed: dict[int, str] = {}
+    for key in keys:
+        claimed[key] = f"keys[{key}]"
+
+    for phase, phase_keys in phases.items():
+        for key in phase_keys:
+            if key in claimed:
+                raise ConfigError(
+                    f"Key {key} claimed by both {claimed[key]} and "
+                    f"google_meet.phases.{phase}"
+                )
+
+    for dial, dial_config in dials.items():
+        builder = DIAL_TYPES.get(dial_config.type)
+        if builder is None:
+            raise ConfigError(
+                f"dials[{dial}]: unknown type {dial_config.type!r}"
+            )
+        controller.register_dial(builder(dial, dial_config, context))
+
+    for key, key_config in keys.items():
+        builder = KEY_TYPES.get(key_config.type)
+        if builder is None:
+            raise ConfigError(f"keys[{key}]: unknown type {key_config.type!r}")
+        controller.register_key(builder(key, key_config, context))
+
+
+def _build_brightness_dial(
+    dial: int, _config: Any, _context: BuildContext
+) -> BrightnessDial:
+    """
+    Build a brightness dial.
+    """
+    return BrightnessDial(dial)
+
+
+register_section("streamdeck", _build_streamdeck)
+register_dial_type("brightness", _build_brightness_dial)

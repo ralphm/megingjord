@@ -37,7 +37,11 @@ dependencies = [
     "svgelements",
     "xdg_base_dirs",
     "async_lru",
+    "PyYAML",
 ]
+
+[project.scripts]
+megingjord = "megingjord.cli:run"
 [project.optional-dependencies]
 tests = [
     "pytest",
@@ -56,6 +60,7 @@ dev = [
     "mypy",
     "pre-commit",
     "pylint",
+    "types-PyYAML",
 ]
 
 [project.urls]
@@ -68,6 +73,7 @@ line-length = 79
 
 [tool.isort]
 profile = "black"
+line_length = 79
 
 [tool.pylint]
 enable = [

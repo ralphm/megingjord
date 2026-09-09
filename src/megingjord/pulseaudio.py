@@ -13,7 +13,7 @@ from contextlib import suppress
 from typing import Any, AsyncIterator
 
 from aiohttp import web
-from attrs import define, field
+from attrs import asdict, define, field
 from PIL import Image
 from pulsectl import (
     PulseCardInfo,
@@ -26,6 +26,14 @@ from pulsectl import (
 from pulsectl_asyncio import PulseAsync
 from StreamDeck.Devices.StreamDeck import StreamDeck
 
+from .registry import (
+    BuildContext,
+    ConfigError,
+    build_config,
+    register_dial_type,
+    register_key_type,
+    register_section,
+)
 from .streamdeck import DeckController, ScrollerItem, ScrollerView
 
 logger = logging.getLogger(__name__)
@@ -120,8 +128,8 @@ class PulseOutput:
 
         def check_rule(rule: dict[str, Any]) -> bool:
             return check_resource(
-                rule.get("card", {}), self.card
-            ) and check_resource(rule.get("port", {}), self.port)
+                rule.get("card") or {}, self.card
+            ) and check_resource(rule.get("port") or {}, self.port)
 
         weight_adjust = 0
         for weight_rule in self.coordinator.output_weights:
@@ -237,8 +245,8 @@ class PulseInput:
 
         def check_rule(rule: dict[str, Any]) -> bool:
             return check_resource(
-                rule.get("card", {}), self.card
-            ) and check_resource(rule.get("port", {}), self.port)
+                rule.get("card") or {}, self.card
+            ) and check_resource(rule.get("port") or {}, self.port)
 
         weight_adjust = 0
         for weight_rule in self.coordinator.input_weights:
@@ -1087,3 +1095,90 @@ class PulseDefaultSourceDial:
         )
 
         return image
+
+
+@define
+class WeightConfig:
+    """
+    A PulseAudio output or input weight rule.
+    """
+
+    card: dict[str, Any] | None = None
+    port: dict[str, Any] | None = None
+    weight: int = 0
+
+
+@define
+class PulseAudioConfig:
+    """
+    PulseAudio coordinator configuration.
+    """
+
+    output_weights: list[WeightConfig] = field(factory=list)
+    input_weights: list[WeightConfig] = field(factory=list)
+
+
+def _build_pulseaudio(data: dict[str, Any], context: BuildContext) -> None:
+    """
+    Build the PulseAudio coordinator from its configuration section.
+    """
+    config = PulseAudioConfig(
+        output_weights=[
+            build_config(WeightConfig, f"output_weights[{index}]", weight)
+            for index, weight in enumerate(data.get("output_weights", []))
+        ],
+        input_weights=[
+            build_config(WeightConfig, f"input_weights[{index}]", weight)
+            for index, weight in enumerate(data.get("input_weights", []))
+        ],
+    )
+    context.pulseaudio = PulseAudioCoordinator(
+        context.app,
+        output_weights=[asdict(weight) for weight in config.output_weights],
+        input_weights=[asdict(weight) for weight in config.input_weights],
+    )
+
+
+def _build_sink_dial(
+    dial: int, _config: Any, context: BuildContext
+) -> PulseDefaultSinkDial:
+    """
+    Build a PulseAudio default sink dial.
+    """
+    if context.pulseaudio is None:
+        raise ConfigError(
+            f"dials[{dial}]: pulseaudio.sink requires a pulseaudio section"
+        )
+    return PulseDefaultSinkDial(dial, pulse=context.pulseaudio)
+
+
+def _build_source_dial(
+    dial: int, _config: Any, context: BuildContext
+) -> PulseDefaultSourceDial:
+    """
+    Build a PulseAudio default source dial.
+    """
+    if context.pulseaudio is None:
+        raise ConfigError(
+            f"dials[{dial}]: pulseaudio.source requires a pulseaudio section"
+        )
+    return PulseDefaultSourceDial(dial, pulse=context.pulseaudio)
+
+
+def _build_sink_key(
+    key: int, _config: Any, context: BuildContext
+) -> PulseDefaultSinkKey:
+    """
+    Build a PulseAudio default sink key.
+    """
+    if context.pulseaudio is None:
+        raise ConfigError(
+            f"keys[{key}]: pulseaudio.sink requires a pulseaudio section"
+        )
+    return PulseDefaultSinkKey(key, pulse=context.pulseaudio)
+
+
+register_section("pulseaudio", _build_pulseaudio)
+register_dial_type("pulseaudio.sink", _build_sink_dial)
+register_dial_type("pulseaudio.source", _build_source_dial)
+register_key_type("pulseaudio.sink", _build_sink_key)

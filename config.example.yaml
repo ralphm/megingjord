@@ -1,0 +1,76 @@
+# Megingjord configuration example.
+#
+# Copy this file to ~/.config/megingjord/config.yaml and adjust it to
+# your setup. Secrets are read from environment variables with the
+# ${VAR} syntax; set them in your shell or in the systemd unit.
+#
+# The key and dial numbers are the map indices; each number may be
+# claimed only once across the keys map and the Google Meet phases.
+
+streamdeck:
+  theme: dracula
+  dials:
+    0:
+      type: pulseaudio.sink
+    1:
+      type: brightness
+    2:
+      type: ha.entity
+      entity_id: light.living_room
+    3:
+      type: pulseaudio.source
+  keys:
+    0:
+      type: ha.alarm
+      entity_id: alarm_control_panel.home
+      arm_service: alarm_arm_night
+    1:
+      type: ha.entity
+      entity_id: light.living_room
+    2:
+      type: ha.entity
+      entity_id: light.kitchen
+    3:
+      type: ha.entity
+      entity_id: switch.garage
+
+home_assistant:
+  url: wss://homeassistant.local/api/websocket
+  token: ${HA_TOKEN}
+
+pulseaudio:
+  output_weights:
+    - card:
+        proplist:
+          device.bus: pci
+      port:
+        name: analog-output-speaker
+      weight: -10001
+    - port:
+        name: headset-output
+      weight: 10001
+  input_weights: []
+
+google_meet:
+  phases:
+    lobby:
+      6: start-next
+      7: start-instant
+    greenRoom:
+      4: mic
+      5: camera
+      6: home
+      7: enter
+    greenRoomSwitch:
+      4: mic
+      5: camera
+      6: switch
+      7: enter
+    meeting:
+      4: mic
+      5: camera
+      6: hand
+      7: hangup
+    exitHall:
+      6: rejoin
+      7: home

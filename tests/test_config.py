@@ -141,6 +141,58 @@ streamdeck:
                 )
             )
 
+    def test_logging_level(self, tmp_path: Path) -> None:
+        """
+        The logging section sets the log level.
+        """
+        config = load_config(
+            write_config(
+                tmp_path,
+                """
+logging:
+  level: debug
+streamdeck:
+  dials:
+    1:
+      type: brightness
+""",
+            )
+        )
+        assert config.logging_level == "debug"
+        assert "logging" not in config.sections
+
+    def test_logging_level_default(self, tmp_path: Path) -> None:
+        """
+        Without a logging section, the level defaults to info.
+        """
+        config = load_config(
+            write_config(
+                tmp_path,
+                """
+streamdeck:
+  dials:
+    1:
+      type: brightness
+""",
+            )
+        )
+        assert config.logging_level == "info"
+
+    def test_logging_unknown_level(self, tmp_path: Path) -> None:
+        """
+        An unknown logging level is rejected.
+        """
+        with pytest.raises(ConfigError, match="unknown level"):
+            load_config(
+                write_config(
+                    tmp_path,
+                    """
+logging:
+  level: chatty
+""",
+                )
+            )
+
     def test_unknown_section(self, tmp_path: Path) -> None:
         """
         An unknown configuration section is rejected.

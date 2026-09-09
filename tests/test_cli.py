@@ -69,6 +69,27 @@ def test_run_unknown_section(tmp_path, monkeypatch, capsys) -> None:
     assert "Unknown configuration section" in capsys.readouterr().err
 
 
+def test_run_logging_level(tmp_path, monkeypatch) -> None:
+    """
+    The logging section sets the level passed to main.
+    """
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        "logging:\n  level: debug\n"
+        "streamdeck:\n  dials:\n    1:\n      type: brightness\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("sys.argv", ["megingjord", "--config", str(path)])
+    calls = []
+
+    def fake_main(setup, level):
+        calls.append((setup, level))
+
+    monkeypatch.setattr(cli, "main", fake_main)
+    cli.run()
+    assert calls[0][1] == logging.DEBUG
+
+
 def test_run_verbose(tmp_path, monkeypatch) -> None:
     """
     --verbose passes DEBUG level to main.

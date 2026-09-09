@@ -98,6 +98,8 @@ def main(
         level=level,
         datefmt="%Y-%m-%d %H:%M:%S",
     )
+    # PIL logs every PNG chunk at debug level; silence it.
+    logging.getLogger("PIL.PngImagePlugin").setLevel(logging.WARNING)
 
     try:
         megingjord = Megingjord(setup=setup)

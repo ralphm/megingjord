@@ -53,5 +53,9 @@ def run() -> None:
 
     main(
         setup=lambda app: setup_from_config(app, config),
-        level=logging.DEBUG if args.verbose else logging.INFO,
+        level=(
+            logging.DEBUG
+            if args.verbose
+            else getattr(logging, config.logging_level.upper())
+        ),
     )

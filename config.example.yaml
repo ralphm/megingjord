@@ -7,6 +7,10 @@
 # The key and dial numbers are the map indices; each number may be
 # claimed only once across the keys map.
 
+# App-level logging configuration (not an integration section).
+logging:
+  level: info
+
 streamdeck:
   theme: dracula
   dials:

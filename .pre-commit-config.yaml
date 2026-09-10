@@ -28,7 +28,8 @@ repos:
     hooks:
       - id: check-example-config
         name: check example config schema
-        entry: python tools/check_example_config.py
-        language: python
-        additional_dependencies: ["."]
+        # Run with the project venv: the editable install is always
+        # current, unlike a cached hook env with a package snapshot.
+        entry: env/bin/python tools/check_example_config.py
+        language: system
         files: ^config\.example\.yaml$

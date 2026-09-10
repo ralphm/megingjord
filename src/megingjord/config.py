@@ -96,21 +96,36 @@ class Config:
     The full deck configuration.
 
     The sections are kept as raw mappings; each integration
-    interprets its own section via the registry.
+    interprets its own section via the registry. The logging level is
+    app-level configuration, not an integration section.
     """
 
     sections: dict[str, dict[str, Any]] = field(factory=dict)
+    logging_level: str = "info"
+
+
+LOG_LEVELS = ("debug", "info", "warning", "error", "critical")
 
 
 def _build_config(data: dict[str, Any]) -> Config:
     """
     Build the config model from the parsed YAML.
     """
+    logging_data = data.pop("logging", {})
+    if not isinstance(logging_data, dict):
+        raise ConfigError("Section 'logging' must be a mapping")
+    level = logging_data.get("level", "info")
+    if level not in LOG_LEVELS:
+        raise ConfigError(f"logging: unknown level {level!r}")
+
     for name, value in data.items():
-        if not isinstance(value, dict):
+        if value is None:
+            # An empty section (e.g. ``google_meet:``) is valid.
+            data[name] = {}
+        elif not isinstance(value, dict):
             raise ConfigError(f"Section {name!r} must be a mapping")
 
-    config = Config(sections=data)
+    config = Config(sections=data, logging_level=level)
 
     _validate(config)
     return config

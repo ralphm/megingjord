@@ -4,6 +4,7 @@
 Tests for the command line entry point.
 """
 
+import logging
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -68,6 +69,49 @@ def test_run_unknown_section(tmp_path, monkeypatch, capsys) -> None:
     assert "Unknown configuration section" in capsys.readouterr().err
 
 
+def test_run_logging_level(tmp_path, monkeypatch) -> None:
+    """
+    The logging section sets the level passed to main.
+    """
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        "logging:\n  level: debug\n"
+        "streamdeck:\n  dials:\n    1:\n      type: brightness\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("sys.argv", ["megingjord", "--config", str(path)])
+    calls = []
+
+    def fake_main(setup, level):
+        calls.append((setup, level))
+
+    monkeypatch.setattr(cli, "main", fake_main)
+    cli.run()
+    assert calls[0][1] == logging.DEBUG
+
+
+def test_run_verbose(tmp_path, monkeypatch) -> None:
+    """
+    --verbose passes DEBUG level to main.
+    """
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        "streamdeck:\n  dials:\n    1:\n      type: brightness\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "sys.argv", ["megingjord", "--config", str(path), "--verbose"]
+    )
+    calls = []
+
+    def fake_main(setup, level):
+        calls.append((setup, level))
+
+    monkeypatch.setattr(cli, "main", fake_main)
+    cli.run()
+    assert calls[0][1] == logging.DEBUG
+
+
 def test_run_setup(tmp_path, monkeypatch) -> None:
     """
     A valid config is passed to main as a setup callable.
@@ -80,8 +124,8 @@ def test_run_setup(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr("sys.argv", ["megingjord", "--config", str(path)])
     calls = []
 
-    def fake_main(setup):
-        calls.append(setup)
+    def fake_main(setup, level):
+        calls.append((setup, level))
 
     monkeypatch.setattr(cli, "main", fake_main)
     cli.run()
@@ -91,5 +135,5 @@ def test_run_setup(tmp_path, monkeypatch) -> None:
     controller = MagicMock()
     controller.deck = MagicMock()
     app["deck_controller"] = controller
-    calls[0](app)
+    calls[0][0](app)
     assert app["color_theme"] == "default"

@@ -26,7 +26,6 @@ from .registry import (
     KEY_TYPES,
     BuildContext,
     ConfigError,
-    build_config,
     register_dial_type,
     register_section,
     section_namespace,
@@ -574,29 +573,6 @@ def set_touchscreen_tile_image(
     deck.set_touchscreen_image(image, 220 * tile, 0, 140, 100)
 
 
-@define
-class DialConfig:
-    """
-    A dial registration.
-    """
-
-    type: str
-    entity_id: str | None = None
-    arm_service: str | None = None
-
-
-@define
-class KeyConfig:
-    """
-    A key registration.
-    """
-
-    type: str
-    entity_id: str | None = None
-    arm_service: str | None = None
-    icon: str | None = None
-
-
 def _build_streamdeck(data: dict[str, Any], context: BuildContext) -> None:
     """
     Build the deck from the streamdeck configuration section.
@@ -610,29 +586,29 @@ def _build_streamdeck(data: dict[str, Any], context: BuildContext) -> None:
     dials_data = data.get("dials", {})
     if not isinstance(dials_data, dict):
         raise ConfigError("streamdeck: 'dials' must be a mapping")
-    dials = {
-        key: build_config(DialConfig, f"dials[{key}]", value)
-        for key, value in dials_data.items()
-    }
+    for dial, value in dials_data.items():
+        if not isinstance(value, dict):
+            raise ConfigError(f"dials[{dial}]: must be a mapping")
     keys_data = data.get("keys", {})
     if not isinstance(keys_data, dict):
         raise ConfigError("streamdeck: 'keys' must be a mapping")
-    keys = {
-        key: build_config(KeyConfig, f"keys[{key}]", value)
-        for key, value in keys_data.items()
-    }
+    for key, value in keys_data.items():
+        if not isinstance(value, dict):
+            raise ConfigError(f"keys[{key}]: must be a mapping")
 
     # Request the integrations this deck needs: those referenced by
     # the dial and key types, and those with a configuration section
     # (e.g. the Google Meet coordinator). Each requested integration
     # interprets its own configuration and starts itself.
     namespaces: set[str] = set()
-    for dial_config in dials.values():
-        if "." in dial_config.type:
-            namespaces.add(dial_config.type.partition(".")[0])
-    for key_config in keys.values():
-        if "." in key_config.type:
-            namespaces.add(key_config.type.partition(".")[0])
+    for value in dials_data.values():
+        type_ = value.get("type")
+        if type_ is not None and "." in type_:
+            namespaces.add(type_.partition(".")[0])
+    for value in keys_data.values():
+        type_ = value.get("type")
+        if type_ is not None and "." in type_:
+            namespaces.add(type_.partition(".")[0])
     for name in context.config.sections:
         namespace = section_namespace(name)
         if namespace is not None:
@@ -640,35 +616,25 @@ def _build_streamdeck(data: dict[str, Any], context: BuildContext) -> None:
     for namespace in namespaces:
         context.request(namespace)
 
-    # The Google Meet phases are alternative layouts (only one is
-    # active at a time), so they may share key numbers with each
-    # other; they must not collide with the statically registered keys.
-    phases = context.config.sections.get("google_meet", {}).get("phases", {})
-    claimed: dict[int, str] = {}
-    for key in keys:
-        claimed[key] = f"keys[{key}]"
-
-    for phase, phase_keys in phases.items():
-        for key in phase_keys:
-            if key in claimed:
-                raise ConfigError(
-                    f"Key {key} claimed by both {claimed[key]} and "
-                    f"google_meet.phases.{phase}"
-                )
-
-    for dial, dial_config in dials.items():
-        builder = DIAL_TYPES.get(dial_config.type)
+    for dial, value in dials_data.items():
+        type_ = value.get("type")
+        if type_ is None:
+            raise ConfigError(f"dials[{dial}]: missing 'type'")
+        builder = DIAL_TYPES.get(type_)
         if builder is None:
-            raise ConfigError(
-                f"dials[{dial}]: unknown type {dial_config.type!r}"
-            )
-        controller.register_dial(builder(dial, dial_config, context))
+            raise ConfigError(f"dials[{dial}]: unknown type {type_!r}")
+        config_data = {k: v for k, v in value.items() if k != "type"}
+        controller.register_dial(builder(dial, config_data, context))
 
-    for key, key_config in keys.items():
-        builder = KEY_TYPES.get(key_config.type)
+    for key, value in keys_data.items():
+        type_ = value.get("type")
+        if type_ is None:
+            raise ConfigError(f"keys[{key}]: missing 'type'")
+        builder = KEY_TYPES.get(type_)
         if builder is None:
-            raise ConfigError(f"keys[{key}]: unknown type {key_config.type!r}")
-        controller.register_key(builder(key, key_config, context))
+            raise ConfigError(f"keys[{key}]: unknown type {type_!r}")
+        config_data = {k: v for k, v in value.items() if k != "type"}
+        controller.register_key(builder(key, config_data, context))
 
 
 def _build_brightness_dial(

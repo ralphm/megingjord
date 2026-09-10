@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import signal
 import sys
 from contextlib import suppress
 from typing import AsyncIterator, Callable
@@ -60,7 +61,29 @@ class Megingjord:
 
         self.app["colors"] = get_colors(self.app["color_theme"])
 
-        web.run_app(self.app, shutdown_timeout=0, port=2394)
+        asyncio.run(self._run())
+
+    async def _run(self) -> None:
+        """
+        Run the app without an HTTP server of its own.
+
+        The cleanup contexts start the deck controller and the
+        integrations' own servers (e.g. the Google Meet websocket).
+        """
+        loop = asyncio.get_running_loop()
+        stop = asyncio.Event()
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            try:
+                loop.add_signal_handler(sig, stop.set)
+            except NotImplementedError:  # pragma: no cover
+                pass
+
+        runner = web.AppRunner(self.app, handle_signals=False)
+        await runner.setup()
+        try:
+            await stop.wait()
+        finally:
+            await runner.cleanup()
 
 
 def main(
@@ -75,6 +98,8 @@ def main(
         level=level,
         datefmt="%Y-%m-%d %H:%M:%S",
     )
+    # PIL logs every PNG chunk at debug level; silence it.
+    logging.getLogger("PIL.PngImagePlugin").setLevel(logging.WARNING)
 
     try:
         megingjord = Megingjord(setup=setup)

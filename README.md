@@ -46,6 +46,14 @@ megingjord
 
 A custom config path can be given with `--config`.
 
+The log level is configured in the `logging` section (one of `debug`,
+`info`, `warning`, `error`, `critical`); `--verbose` overrides it to
+`debug`:
+```yaml
+logging:
+  level: debug
+```
+
 ### Running as a user service
 
 An example systemd user unit is shipped in `packaging/megingjord.service`:

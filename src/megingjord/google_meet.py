@@ -18,8 +18,14 @@ from aiohttp import WSCloseCode, web
 from attrs import define, field
 from StreamDeck.Devices.StreamDeck import StreamDeck
 
-from .registry import BuildContext, ConfigError, register_section
-from .streamdeck import DeckController, Key
+from .registry import (
+    BuildContext,
+    ConfigError,
+    build_config,
+    register_key_type,
+    register_section,
+)
+from .streamdeck import DeckController
 
 logger = logging.getLogger(__name__)
 
@@ -80,157 +86,103 @@ NOT_READY_ICONS = {
 
 
 @define
-class GoogleMeetMuteKey:
+class GoogleMeetTile:
     """
-    Google Meet Mute Key.
+    A Google Meet key tile.
+
+    A tile with a fixed action (``google_meet.tile``) or a per-phase
+    action (``google_meet.phased_tile``). The tile renders blank until
+    the websocket is connected and, for phased tiles, the current
+    phase has an action.
     """
 
     key: int
     meet: GoogleMeetCoordinator
-    control: str
+    action: str | None = None
+    phases: dict[str, str] | None = None
 
     controller: DeckController | None = field(init=False)
     deck: StreamDeck = field(init=False)
+    connected: bool = field(init=False, default=False)
+    ready: bool = field(init=False, default=True)
+    available: bool = field(init=False, default=True)
+    title: str | None = field(init=False, default=None)
+    subtitle: str | None = field(init=False, default=None)
+    muted: bool | None = field(init=False, default=None)
+
+    @property
+    def current_action(self) -> str | None:
+        """
+        The action for the current phase.
+        """
+        if self.phases is not None:
+            phase = self.meet.phase
+            if phase is None:
+                return None
+            return self.phases.get(phase)
+        return self.action
 
     async def start(self, deck: StreamDeck) -> None:
         """
         Start this key.
         """
         self.deck = deck
-        await self._draw_not_ready()
-
-    async def _draw_not_ready(self) -> None:
-        """
-        Draw the tile in the not-ready state, until the real state arrives.
-        """
-        if not self.controller or not self.deck:
-            return
-
-        icon = NOT_READY_ICONS[self.control]
-        tile = await self.controller.renderer.draw_state_tile(
-            title=self.control,
-            colors={
-                "tile-fg": "google-meet-fg",
-                "tile-bg": "tile-inactive-bg",
-                "icon-primary": "icon-inactive",
-            },
-            icon=icon,
-        )
-        self.deck.set_key_image(self.key, tile)
-
-    async def stop(self) -> None:
-        """
-        Stop this key.
-        """
-        self.deck.set_key_image(self.key, None)
-
-    async def on_state(self, muted: bool) -> None:
-        """
-        Received mute state.
-        """
-        if not self.controller or not self.deck:
-            return
-
-        icon, color = MUTE_ICON_COLOR[(self.control, muted)]
-
-        tile = await self.controller.renderer.draw_state_tile(
-            title=self.control,
-            colors={
-                "tile-fg": "google-meet-fg",
-                "tile-bg": f"{color}-bg",
-                "icon-primary": f"{color}-icon",
-            },
-            icon=icon,
-        )
-        self.deck.set_key_image(self.key, tile)
-
-    async def on_key_change(self, key_state: bool) -> None:
-        """
-        Called when the key got pressed or released.
-        """
-        if not key_state:
-            return
-
-        await self.meet.send_event(
-            {"event": f"toggle{self.control.capitalize()}"}
-        )
-
-
-@define
-class GoogleMeetActionKey:
-    """
-    Google Meet Action Key.
-
-    A key with a fixed tile that sends an event to the browser extension
-    when pressed, e.g. starting a meeting, joining, leaving or returning
-    home. Keys that require the Meet UI to be ready (e.g. joining a
-    meeting) can be marked not ready, rendering them inactive and ignoring
-    presses.
-    """
-
-    key: int
-    meet: GoogleMeetCoordinator
-    control: str
-    ready: bool = field(default=True)
-    available: bool = field(default=True)
-    title: str | None = field(default=None)
-    subtitle: str | None = field(default=None)
-
-    controller: DeckController | None = field(init=False)
-    deck: StreamDeck = field(init=False)
-
-    async def start(self, deck: StreamDeck) -> None:
-        """
-        Start this key.
-        """
-        self.deck = deck
+        self.meet.subscribers.append(self)
         await self._draw()
 
     async def stop(self) -> None:
         """
         Stop this key.
         """
+        if self in self.meet.subscribers:
+            self.meet.subscribers.remove(self)
         self.deck.set_key_image(self.key, None)
 
-    async def on_ready(self, ready: bool) -> None:
+    async def on_connection(self, connected: bool) -> None:
         """
-        Received readiness state.
+        Received connection state.
         """
-        if ready == self.ready:
-            return
-
-        self.ready = ready
+        self.connected = connected
+        if not connected:
+            self.ready = True
+            self.available = True
+            self.title = None
+            self.subtitle = None
+            self.muted = None
         await self._draw()
 
-    async def on_available(self, available: bool) -> None:
+    async def handle_event(self, event: dict[str, Any]) -> None:
         """
-        Received availability state.
+        Received an event from the browser extension.
         """
-        if available == self.available:
+        action = self.current_action
+        if event["event"] == "phase":
+            self.ready = True
+            self.available = True
+            self.title = None
+            self.subtitle = None
+            self.muted = None
+            await self._draw()
             return
-
-        self.available = available
-        await self._draw()
-
-    async def on_label(self, label: str) -> None:
-        """
-        Received label from the Meet UI.
-        """
-        if label == self.title:
+        if action is None:
             return
-
-        self.title = label
-        await self._draw()
-
-    async def on_subtitle(self, subtitle: str) -> None:
-        """
-        Received subtitle from the Meet UI.
-        """
-        if subtitle == self.subtitle:
-            return
-
-        self.subtitle = subtitle
-        await self._draw()
+        if event["event"] == "enterReady" and action == "enter":
+            self.ready = event["ready"]
+            await self._draw()
+        elif event["event"] == "enterLabel" and action == "enter":
+            self.title = event["label"]
+            await self._draw()
+        elif event["event"] == "subtitle" and event["control"] == action:
+            self.subtitle = event["subtitle"]
+            await self._draw()
+        elif event["event"] == "hasNextMeeting" and action == "start-next":
+            self.available = event["hasNextMeeting"]
+            await self._draw()
+        elif match := RE_MUTED_STATE.match(event["event"]):
+            control = match.group(1)
+            if control == action:
+                self.muted = event["muted"]
+                await self._draw()
 
     async def _draw(self) -> None:
         """
@@ -239,30 +191,52 @@ class GoogleMeetActionKey:
         if not self.controller or not self.deck:
             return
 
-        _event, title, icon, color = ACTION_KEYS[self.control]
+        action = self.current_action
+        if action is None or not self.connected:
+            self.deck.set_key_image(self.key, None)
+            return
 
-        if self.control == "home" and self.meet.phase == "greenRoom":
-            color = "google-meet-secondary"
-
-        if self.title:
-            title = self.title
-
-        subtitle = None
-        if self.subtitle and self.available:
-            subtitle = textwrap.shorten(self.subtitle, 20, placeholder="…")
-
-        if not self.ready or not self.available:
-            colors = {
-                "tile-bg": "tile-inactive-bg",
-                "icon-primary": "icon-inactive",
-            }
-            if not self.available:
-                icon = UNAVAILABLE_ICONS.get(self.control, icon)
+        if action in MUTE_CONTROLS:
+            if self.meet.pending or self.muted is None:
+                icon = NOT_READY_ICONS[action]
+                colors = {
+                    "tile-fg": "google-meet-fg",
+                    "tile-bg": "tile-inactive-bg",
+                    "icon-primary": "icon-inactive",
+                }
+            else:
+                icon, color = MUTE_ICON_COLOR[(action, self.muted)]
+                colors = {
+                    "tile-fg": "google-meet-fg",
+                    "tile-bg": f"{color}-bg",
+                    "icon-primary": f"{color}-icon",
+                }
+            title = action
+            subtitle = None
         else:
-            colors = {
-                "tile-bg": f"{color}-bg",
-                "icon-primary": f"{color}-icon",
-            }
+            _event, title, icon, color = ACTION_KEYS[action]
+            if action == "home" and self.meet.phase == "green_room":
+                color = "google-meet-secondary"
+
+            if self.title:
+                title = self.title
+
+            subtitle = None
+            if self.subtitle and self.available:
+                subtitle = textwrap.shorten(self.subtitle, 20, placeholder="…")
+
+            if self.meet.pending or not self.ready or not self.available:
+                colors = {
+                    "tile-bg": "tile-inactive-bg",
+                    "icon-primary": "icon-inactive",
+                }
+                if not self.available:
+                    icon = UNAVAILABLE_ICONS.get(action, icon)
+            else:
+                colors = {
+                    "tile-bg": f"{color}-bg",
+                    "icon-primary": f"{color}-icon",
+                }
 
         tile = await self.controller.renderer.draw_state_tile(
             title=title,
@@ -276,11 +250,22 @@ class GoogleMeetActionKey:
         """
         Called when the key got pressed or released.
         """
-        if not key_state or not self.ready or not self.available:
+        if not key_state:
             return
 
-        event, _title, _icon, _color = ACTION_KEYS[self.control]
-        await self.meet.send_event({"event": event})
+        action = self.current_action
+        if action is None or not self.connected or self.meet.pending:
+            return
+
+        if action in MUTE_CONTROLS:
+            await self.meet.send_event(
+                {"event": f"toggle{action.capitalize()}"}
+            )
+        else:
+            if not self.ready or not self.available:
+                return
+            event, _title, _icon, _color = ACTION_KEYS[action]
+            await self.meet.send_event({"event": event})
 
 
 @define
@@ -288,137 +273,74 @@ class GoogleMeetCoordinator:
     """
     Coordinator for Google Meet calls.
 
-    The keys shown on the Stream Deck depend on the meeting phase reported
-    by the browser extension: lobby, greenRoom, greenRoomSwitch, meeting,
-    exitHall, or none when no Meet tab is open. Controls can additionally
-    be hidden (e.g. no scheduled meeting to start) or marked not ready
-    (e.g. the join button not yet clickable).
+    Owns the websocket server the browser extension connects to, and
+    the meeting state (phase, muted states). Tiles subscribe and
+    render the state for their action.
     """
 
     app: web.Application
-    deck_controller: DeckController
-    keys: dict[str, dict[int, str]]
+    host: str = "127.0.0.1"
+    port: int = 2394
 
     socket: web.WebSocketResponse | None = field(init=False, default=None)
     states: dict[str, bool] = field(init=False, factory=dict)
     phase: str | None = field(init=False, default=None)
-    control_keys: dict[str, Key] = field(init=False, factory=dict)
-    unavailable_controls: set[str] = field(init=False, factory=set)
+    pending: bool = field(init=False, default=False)
     stopping: bool = field(init=False, default=False)
+    subscribers: list[GoogleMeetTile] = field(init=False, factory=list)
+    runner: web.AppRunner | None = field(init=False, default=None)
+    site: web.TCPSite | None = field(init=False, default=None)
 
     def __attrs_post_init__(self) -> None:
         self.app.cleanup_ctx.append(self.start)
 
     async def start(self, app: web.Application) -> AsyncIterator[None]:
         """
-        Start the coordinator.
+        Start the websocket server.
         """
-
-        async def close_sockets(_app: web.Application) -> None:
-            logger.info("Cleaning up websockets")
-            self.stopping = True  # Stop accepting new connections
-
-            if self.socket is not None:
-                await self.socket.close()
-
-        app.on_shutdown.append(close_sockets)
-
-        self.stopping = False
-        app.add_routes([web.get("/", self.websocket_handler)])
+        server = web.Application()
+        server.add_routes([web.get("/", self.websocket_handler)])
+        self.runner = web.AppRunner(server)
+        await self.runner.setup()
+        self.site = web.TCPSite(self.runner, self.host, self.port)
+        await self.site.start()
+        logger.info(
+            "Google Meet websocket listening on %s:%s", self.host, self.port
+        )
 
         yield
 
-    async def _register_control(self, key: int, control: str) -> None:
-        """
-        Register a single control key.
-        """
-        if control in MUTE_CONTROLS:
-            control_key: Key = GoogleMeetMuteKey(key, self, control)
-        else:
-            control_key = GoogleMeetActionKey(
-                key,
-                self,
-                control,
-                available=control not in self.unavailable_controls,
-            )
-
-        self.deck_controller.register_key(control_key)
-        self.control_keys[control] = control_key
-        await control_key.start(self.deck_controller.deck)
-
-    async def register_phase(self, phase: str) -> None:
-        """
-        Register the keys for the given phase.
-        """
-        if phase == self.phase:
-            return
-
-        await self.unregister_keys()
-        self.phase = phase
-        self.states = {}
-
-        for key, control in self.keys.get(phase, {}).items():
-            await self._register_control(key, control)
-
-    async def unregister_keys(self) -> None:
-        """
-        Unregister keys with Stream Deck.
-        """
-        for control_key in self.control_keys.values():
-            self.deck_controller.unregister_key(control_key)
-            await control_key.stop()
-
-        self.control_keys = {}
-
-    async def set_control_available(
-        self, control: str, available: bool
-    ) -> None:
-        """
-        Mark a control as available or not.
-        """
-        if available:
-            self.unavailable_controls.discard(control)
-        else:
-            self.unavailable_controls.add(control)
-
-        if control in self.control_keys:
-            key = self.control_keys[control]
-            assert isinstance(key, GoogleMeetActionKey)
-            await key.on_available(available)
+        if self.socket is not None:
+            await self.socket.close()
+        await self.runner.cleanup()
 
     async def handle_event(self, event: dict[str, Any]) -> None:
         """
         Handle incoming event.
         """
         if event["event"] == "phase":
-            await self.register_phase(event["phase"])
-        elif event["event"] == "enterReady":
-            if "enter" in self.control_keys:
-                key = self.control_keys["enter"]
-                assert isinstance(key, GoogleMeetActionKey)
-                await key.on_ready(event["ready"])
-        elif event["event"] == "enterLabel":
-            if "enter" in self.control_keys:
-                key = self.control_keys["enter"]
-                assert isinstance(key, GoogleMeetActionKey)
-                await key.on_label(event["label"])
-        elif event["event"] == "subtitle":
-            control = event["control"]
-            if control in self.control_keys:
-                key = self.control_keys[control]
-                assert isinstance(key, GoogleMeetActionKey)
-                await key.on_subtitle(event["subtitle"])
-        elif event["event"] == "hasNextMeeting":
-            await self.set_control_available(
-                "start-next", event["hasNextMeeting"]
-            )
+            # The extension marks the phase it expects after a command
+            # with pending; only broadcast when the phase or its
+            # pending state actually changed, so tiles do not reset
+            # their state on unrelated events.
+            pending = event.get("pending", False)
+            if event["phase"] == self.phase and pending == self.pending:
+                return
+            self.phase = event["phase"]
+            self.pending = pending
+            # Tiles reset their state on every phase event; wipe the
+            # known states so the mute events that follow are
+            # broadcast again instead of being deduplicated.
+            self.states = {}
         elif match := RE_MUTED_STATE.match(event["event"]):
             control = match.group(1)
+            if self.states.get(control) == event["muted"]:
+                return
             self.states[control] = event["muted"]
-            if control in self.control_keys:
-                key = self.control_keys[control]
-                assert isinstance(key, GoogleMeetMuteKey)
-                await key.on_state(event["muted"])
+
+        for subscriber in self.subscribers:
+            await subscriber.handle_event(event)
+
         logger.debug(f"Current states:\n{pprint.pformat(self.states)}")
 
     async def websocket_handler(
@@ -446,6 +368,9 @@ class GoogleMeetCoordinator:
         self.socket = ws
         self.states = {}
         self.phase = None
+        self.pending = False
+        for subscriber in self.subscribers:
+            await subscriber.on_connection(True)
 
         async for msg in ws:
             logger.debug(f"Received message {msg}")
@@ -464,9 +389,8 @@ class GoogleMeetCoordinator:
         logger.info("Websocket connection closed")
 
         self.socket = None
-
-        await self.unregister_keys()
-        self.phase = None
+        for subscriber in self.subscribers:
+            await subscriber.on_connection(False)
 
         return ws
 
@@ -486,22 +410,67 @@ class GoogleMeetConfig:
     Google Meet coordinator configuration.
     """
 
-    phases: dict[str, dict[int, str]]
+    host: str = "127.0.0.1"
+    port: int = 2394
+
+
+@define
+class GoogleMeetTileConfig:
+    """
+    A Google Meet tile with a fixed action.
+    """
+
+    action: str
+
+
+@define
+class GoogleMeetPhasedTileConfig:
+    """
+    A Google Meet tile with a per-phase action.
+    """
+
+    phases: dict[str, str]
 
 
 def _build_google_meet(data: dict[str, Any], context: BuildContext) -> None:
     """
     Build the Google Meet coordinator from its configuration section.
     """
-    phases = data.get("phases")
-    if phases is None:
-        raise ConfigError("google_meet: missing 'phases'")
-    if not isinstance(phases, dict):
-        raise ConfigError("google_meet: 'phases' must be a mapping")
-    config = GoogleMeetConfig(phases=phases)
+    config = build_config(GoogleMeetConfig, "google_meet", data)
     context.google_meet = GoogleMeetCoordinator(
-        context.app, context.controller, config.phases
+        context.app, host=config.host, port=config.port
     )
 
 
+def _build_tile(
+    key: int, data: dict[str, Any], context: BuildContext
+) -> GoogleMeetTile:
+    """
+    Build a Google Meet tile with a fixed action.
+    """
+    if context.google_meet is None:
+        raise ConfigError(
+            f"keys[{key}]: google_meet.tile requires a google_meet section"
+        )
+    config = build_config(GoogleMeetTileConfig, f"keys[{key}]", data)
+    return GoogleMeetTile(key, context.google_meet, action=config.action)
+
+
+def _build_phased_tile(
+    key: int, data: dict[str, Any], context: BuildContext
+) -> GoogleMeetTile:
+    """
+    Build a Google Meet tile with a per-phase action.
+    """
+    if context.google_meet is None:
+        raise ConfigError(
+            f"keys[{key}]: google_meet.phased_tile requires a "
+            "google_meet section"
+        )
+    config = build_config(GoogleMeetPhasedTileConfig, f"keys[{key}]", data)
+    return GoogleMeetTile(key, context.google_meet, phases=config.phases)
+
+
 register_section("google_meet", _build_google_meet)
+register_key_type("google_meet.tile", _build_tile)
+register_key_type("google_meet.phased_tile", _build_phased_tile)

@@ -7,6 +7,7 @@ Command line entry point.
 from __future__ import annotations
 
 import argparse
+import logging
 from pathlib import Path
 
 from xdg_base_dirs import xdg_config_home
@@ -34,6 +35,11 @@ def run() -> None:
         help="Path to the configuration file (default: "
         "~/.config/megingjord/config.yaml)",
     )
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Enable debug logging",
+    )
     args = parser.parse_args()
 
     path = get_config_path(args.config)
@@ -45,4 +51,11 @@ def run() -> None:
     except ConfigError as exc:
         parser.error(str(exc))
 
-    main(setup=lambda app: setup_from_config(app, config))
+    main(
+        setup=lambda app: setup_from_config(app, config),
+        level=(
+            logging.DEBUG
+            if args.verbose
+            else getattr(logging, config.logging_level.upper())
+        ),
+    )

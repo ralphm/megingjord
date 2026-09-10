@@ -141,9 +141,29 @@ streamdeck:
                 )
             )
 
-    def test_phases_may_share_keys(self, tmp_path: Path) -> None:
+    def test_logging_level(self, tmp_path: Path) -> None:
         """
-        Google Meet phases are alternatives and may share key numbers.
+        The logging section sets the log level.
+        """
+        config = load_config(
+            write_config(
+                tmp_path,
+                """
+logging:
+  level: debug
+streamdeck:
+  dials:
+    1:
+      type: brightness
+""",
+            )
+        )
+        assert config.logging_level == "debug"
+        assert "logging" not in config.sections
+
+    def test_logging_level_default(self, tmp_path: Path) -> None:
+        """
+        Without a logging section, the level defaults to info.
         """
         config = load_config(
             write_config(
@@ -153,18 +173,25 @@ streamdeck:
   dials:
     1:
       type: brightness
-google_meet:
-  phases:
-    lobby:
-      6: start-next
-    greenRoom:
-      6: home
 """,
             )
         )
-        phases = config.sections["google_meet"]["phases"]
-        assert phases["lobby"][6] == "start-next"
-        assert phases["greenRoom"][6] == "home"
+        assert config.logging_level == "info"
+
+    def test_logging_unknown_level(self, tmp_path: Path) -> None:
+        """
+        An unknown logging level is rejected.
+        """
+        with pytest.raises(ConfigError, match="unknown level"):
+            load_config(
+                write_config(
+                    tmp_path,
+                    """
+logging:
+  level: chatty
+""",
+                )
+            )
 
     def test_unknown_section(self, tmp_path: Path) -> None:
         """
@@ -213,9 +240,6 @@ pulseaudio:
   output_weights: []
   input_weights: []
 google_meet:
-  phases:
-    lobby:
-      6: start-next
 """,
             )
         )
@@ -233,6 +257,8 @@ google_meet:
         assert "ha.entity" in KEY_TYPES
         assert "ha.alarm" in KEY_TYPES
         assert "pulseaudio.sink" in KEY_TYPES
+        assert "google_meet.tile" in KEY_TYPES
+        assert "google_meet.phased_tile" in KEY_TYPES
         assert "home_assistant" in SECTION_HANDLERS
         assert "pulseaudio" in SECTION_HANDLERS
         assert "google_meet" in SECTION_HANDLERS
@@ -252,7 +278,10 @@ class TestExampleConfig:
         config = load_config(example)
         assert config.sections["streamdeck"]["theme"] == "dracula"
         assert "home_assistant" in config.sections
-        assert "greenRoomSwitch" in config.sections["google_meet"]["phases"]
+        assert config.sections["google_meet"] == {}
+        keys = config.sections["streamdeck"]["keys"]
+        assert keys[4]["type"] == "google_meet.tile"
+        assert keys[6]["type"] == "google_meet.phased_tile"
 
 
 class TestSetupFromConfig:
@@ -328,29 +357,6 @@ home_assistant:
         with pytest.raises(ConfigError, match="entity_id"):
             setup_from_config(self.make_app(), config)
 
-    def test_duplicate_cross_section(self, tmp_path: Path) -> None:
-        """
-        A key claimed by both keys and a Google Meet phase is rejected.
-        """
-        config = load_config(
-            write_config(
-                tmp_path,
-                """
-streamdeck:
-  keys:
-    4:
-      type: ha.entity
-      entity_id: light.test
-google_meet:
-  phases:
-    meeting:
-      4: mic
-""",
-            )
-        )
-        with pytest.raises(ConfigError, match="claimed by both"):
-            setup_from_config(self.make_app(), config)
-
     def test_missing_dial_type(self, tmp_path: Path) -> None:
         """
         A dial without a type is rejected with the config path.
@@ -392,9 +398,10 @@ home_assistant:
         with pytest.raises(ConfigError, match="home_assistant"):
             setup_from_config(self.make_app(), config)
 
-    def test_google_meet_requires_phases(self, tmp_path: Path) -> None:
+    def test_google_meet_empty_section(self, tmp_path: Path) -> None:
         """
-        A google_meet section without phases is rejected.
+        An empty google_meet section creates the coordinator with
+        defaults.
         """
         config = load_config(
             write_config(
@@ -403,14 +410,84 @@ home_assistant:
 streamdeck:
   keys:
     0:
-      type: ha.entity
-      entity_id: light.test
+      type: google_meet.tile
+      action: mic
+google_meet:
+""",
+            )
+        )
+        app = self.make_app()
+        setup_from_config(app, config)
+        from megingjord.google_meet import GoogleMeetCoordinator
+
+        assert isinstance(
+            app["deck_controller"].register_key.call_args[0][0].meet,
+            GoogleMeetCoordinator,
+        )
+
+    def test_google_meet_host_port(self, tmp_path: Path) -> None:
+        """
+        The google_meet section configures the listen host and port.
+        """
+        config = load_config(
+            write_config(
+                tmp_path,
+                """
+streamdeck:
+  keys:
+    0:
+      type: google_meet.tile
+      action: mic
+google_meet:
+  host: 0.0.0.0
+  port: 2395
+""",
+            )
+        )
+        app = self.make_app()
+        setup_from_config(app, config)
+        meet = app["deck_controller"].register_key.call_args[0][0].meet
+        assert meet.host == "0.0.0.0"
+        assert meet.port == 2395
+
+    def test_google_meet_unknown_field(self, tmp_path: Path) -> None:
+        """
+        An unknown google_meet field is rejected.
+        """
+        config = load_config(
+            write_config(
+                tmp_path,
+                """
+streamdeck:
+  keys:
+    0:
+      type: google_meet.tile
+      action: mic
 google_meet:
   foo: bar
 """,
             )
         )
-        with pytest.raises(ConfigError, match="missing 'phases'"):
+        with pytest.raises(ConfigError, match="google_meet"):
+            setup_from_config(self.make_app(), config)
+
+    def test_google_meet_tile_requires_section(self, tmp_path: Path) -> None:
+        """
+        A google_meet tile requires a google_meet section.
+        """
+        config = load_config(
+            write_config(
+                tmp_path,
+                """
+streamdeck:
+  keys:
+    0:
+      type: google_meet.tile
+      action: mic
+""",
+            )
+        )
+        with pytest.raises(ConfigError, match="google_meet section"):
             setup_from_config(self.make_app(), config)
 
     def test_unknown_theme(self, tmp_path: Path) -> None:
@@ -497,9 +574,6 @@ pulseaudio:
   output_weights: []
   input_weights: []
 google_meet:
-  phases:
-    lobby:
-      6: start-next
 """,
             )
         )

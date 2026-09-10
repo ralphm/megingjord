@@ -104,6 +104,10 @@ fields to Megingjord, so a state update does not re-send every event.
 After a phase change the full state is re-forwarded, so Megingjord
 does not miss the mute states that follow.
 
+Fields that do not apply to the current phase are reported as
+undefined and clear the tab's known values, so stale states (e.g. the
+mute states in the exit hall) are not forwarded.
+
 ## Multi-tab policy
 
 The background script tracks state per tab and reports the "best" tab:

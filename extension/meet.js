@@ -135,39 +135,45 @@ function isHandRaised(button) {
 function readState() {
   const state = { phase: detectPhase() };
 
+  // Fields that do not apply to the current phase are reported as
+  // undefined so the background clears them instead of keeping stale
+  // values (e.g. the mute states in the exit hall).
   const micButton = firstMatch(MIC_SELECTORS);
-  if (micButton) {
-    state.micMuted = micButton.dataset.isMuted === "true";
-  }
+  state.micMuted = micButton
+    ? micButton.dataset.isMuted === "true"
+    : undefined;
 
   const cameraButton = firstMatch(CAMERA_SELECTORS);
-  if (cameraButton) {
-    state.cameraMuted = cameraButton.dataset.isMuted === "true";
-  }
+  state.cameraMuted = cameraButton
+    ? cameraButton.dataset.isMuted === "true"
+    : undefined;
 
   const handButton = firstMatch(HAND_SELECTORS);
-  if (handButton) {
-    state.handMuted = !isHandRaised(handButton);
-  }
+  state.handMuted = handButton ? !isHandRaised(handButton) : undefined;
 
   if (state.phase === "green_room" || state.phase === "green_room_switch") {
     const enterButton = getJoinButton();
-    if (enterButton) {
-      state.enterReady = !isDisabled(enterButton);
-      state.enterLabel = buttonLabel(enterButton);
-    }
+    state.enterReady = enterButton ? !isDisabled(enterButton) : undefined;
+    state.enterLabel = enterButton ? buttonLabel(enterButton) : undefined;
     const titleElement = document.querySelector('[jsname="r4nke"]');
-    if (titleElement) {
-      state.meetingTitle = (titleElement.textContent || "").trim();
-    }
-  } else if (state.phase === "lobby") {
+    state.meetingTitle = titleElement
+      ? (titleElement.textContent || "").trim()
+      : undefined;
+  } else {
+    state.enterReady = undefined;
+    state.enterLabel = undefined;
+    state.meetingTitle = undefined;
+  }
+
+  if (state.phase === "lobby") {
     const card = firstScheduledCard();
     state.hasNextMeeting = !!card;
-    if (card) {
-      state.nextMeetingTitle = (
-        card.getAttribute("aria-label") || card.textContent || ""
-      ).trim();
-    }
+    state.nextMeetingTitle = card
+      ? (card.getAttribute("aria-label") || card.textContent || "").trim()
+      : undefined;
+  } else {
+    state.hasNextMeeting = undefined;
+    state.nextMeetingTitle = undefined;
   }
 
   return state;
@@ -281,7 +287,7 @@ function sendState(force = false) {
       clearTimeout(pendingTimer);
       pendingTimer = null;
       pendingPhase = null;
-    } else if (!force) {
+    } else {
       // Stale DOM read; keep the intent standing.
       return;
     }

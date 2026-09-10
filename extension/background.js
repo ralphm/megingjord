@@ -178,13 +178,16 @@ browser.runtime.onMessage.addListener((message, sender) => {
   if (!sender.tab || message.type !== "state") {
     return;
   }
-  // Structured clone preserves undefined (unlike JSON); drop it so a
-  // mid-transition read cannot clobber known values like the phase.
+  // Structured clone preserves undefined (unlike JSON). Undefined
+  // values clear the tab's known fields (e.g. the mute states when
+  // the phase has no such controls); the phase is kept when a
+  // mid-transition read could not detect one.
   const state = {};
   for (const [key, value] of Object.entries(message.state)) {
-    if (value !== undefined) {
-      state[key] = value;
+    if (key === "phase" && value === undefined) {
+      continue;
     }
+    state[key] = value;
   }
   tabStates.set(sender.tab.id, {
     ...(tabStates.get(sender.tab.id) || {}),

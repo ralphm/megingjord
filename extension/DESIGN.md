@@ -47,7 +47,7 @@ JSON messages over `ws://127.0.0.1:2394`.
 | `enterReady` | `{"event": "enterReady", "ready": bool}` | Green room: join button clickable |
 | `enterLabel` | `{"event": "enterLabel", "label": str}` | Green room: join button text |
 | `hasNextMeeting` | `{"event": "hasNextMeeting", "hasNextMeeting": bool}` | Lobby: scheduled meeting present |
-| `subtitle` | `{"event": "subtitle", "control": str, "subtitle": str}` | Tile subtitle, e.g. meeting title for `start-next` / `enter` |
+| `subtitle` | `{"event": "subtitle", "control": str, "subtitle": str}` | Tile subtitle, e.g. next meeting title for `start-next` |
 
 ### Megingjord -> Extension
 

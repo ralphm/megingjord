@@ -165,13 +165,6 @@ function forwardState(tabId) {
       subtitle: state.nextMeetingTitle,
     });
   }
-  if (changed.meetingTitle !== undefined) {
-    sendToMegingjord({
-      event: "subtitle",
-      control: "enter",
-      subtitle: state.meetingTitle,
-    });
-  }
 }
 
 browser.runtime.onMessage.addListener((message, sender) => {

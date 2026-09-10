@@ -155,14 +155,9 @@ function readState() {
     const enterButton = getJoinButton();
     state.enterReady = enterButton ? !isDisabled(enterButton) : undefined;
     state.enterLabel = enterButton ? buttonLabel(enterButton) : undefined;
-    const titleElement = document.querySelector('[jsname="r4nke"]');
-    state.meetingTitle = titleElement
-      ? (titleElement.textContent || "").trim()
-      : undefined;
   } else {
     state.enterReady = undefined;
     state.enterLabel = undefined;
-    state.meetingTitle = undefined;
   }
 
   if (state.phase === "lobby") {

@@ -23,6 +23,7 @@ from aiohttp import web
 from attrs import define, field
 
 from .registry import (
+    INTEGRATIONS,
     BuildContext,
     ConfigError,
     is_device_section,
@@ -167,13 +168,24 @@ def setup_from_config(app: web.Application, config: Config) -> None:
     """
     Set up the deck from the configuration.
 
-    The device integrations (e.g. the streamdeck) are started first;
-    they request the integrations they need, which interpret their own
-    configuration and start themselves.
+    Integrations with functional startup requirements (e.g. HA with
+    calendar notifications) are started first; they do not need tiles
+    or dials referencing them. Device integrations (e.g. the
+    streamdeck) are started next; they request the integrations their
+    dial and key types reference.
     """
     context = BuildContext(
         app=app, controller=app["deck_controller"], config=config
     )
+
+    for name, data in config.sections.items():
+        namespace = section_namespace(name)
+        if namespace is None:
+            continue
+        integration = INTEGRATIONS[namespace]
+        if not integration.device and integration.needs_start is not None:
+            if integration.needs_start(data):
+                context.request(namespace)
 
     for name in config.sections:
         if is_device_section(name):

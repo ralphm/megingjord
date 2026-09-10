@@ -40,6 +40,7 @@ Do not use this skill for:
 ## Best Practices
 
 - Run the full check suite before committing.
+- Commit between iterations of a larger change, unless the user requests otherwise.
 - Re-add files after the pre-commit hook modifies them, then commit again.
 - The user tests interaction and visual changes on the real deck before asking to commit; do not commit such changes without that live test.
 - Verify each step of a chained install or setup command independently; a failed `&&` chain silently skips the remaining steps.

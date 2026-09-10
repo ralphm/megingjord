@@ -10,7 +10,6 @@ import json
 import logging
 import pprint
 import re
-import textwrap
 from typing import Any, AsyncIterator
 
 import aiohttp
@@ -223,7 +222,7 @@ class GoogleMeetTile:
 
             subtitle = None
             if self.subtitle and self.available:
-                subtitle = textwrap.shorten(self.subtitle, 20, placeholder="…")
+                subtitle = self.subtitle
 
             if self.meet.pending or not self.ready or not self.available:
                 colors = {

@@ -6,8 +6,6 @@ Rendering blocks for key tiles, LCD dial tiles and the status bar.
 
 from __future__ import annotations
 
-import textwrap
-from datetime import datetime
 from io import BytesIO
 from pathlib import Path
 from typing import Any
@@ -24,18 +22,63 @@ UBUNTU_FONT = Path("/usr/share/fonts/truetype/ubuntu/Ubuntu-R.ttf")
 DIAL_TILE_SIZE = (140, 100)
 
 
-def wrap_text(title: str, width: int, max_lines: int) -> list[str]:
+def wrap_text(
+    draw: ImageDraw.ImageDraw,
+    title: str,
+    width: float,
+    max_lines: int,
+    font_size: int = 18,
+) -> list[str]:
     """
     Wrap a title to at most max_lines lines of the given width.
 
-    Excess text is truncated with an ellipsis on the last line.
+    Lines are measured by their rendered glyphs; excess text is
+    truncated with an ellipsis on the last line.
     """
-    lines = textwrap.wrap(title, width=width)
+    font = ImageFont.truetype(UBUNTU_FONT, font_size)
+    lines: list[str] = []
+    current = ""
+    for word in title.split():
+        candidate = f"{current} {word}".strip()
+        if draw.textlength(candidate, font=font) <= width:
+            current = candidate
+        else:
+            if current:
+                lines.append(current)
+            current = word
+    if current:
+        lines.append(current)
     if len(lines) > max_lines:
         rest = " ".join(lines[max_lines - 1 :])
         lines = lines[: max_lines - 1]
-        lines.append(textwrap.shorten(rest, width=width, placeholder="…"))
+        lines.append(shorten_to_width(draw, rest, font_size, width))
     return lines
+
+
+def shorten_to_width(
+    draw: ImageDraw.ImageDraw,
+    text: str,
+    font_size: int,
+    max_width: float,
+) -> str:
+    """
+    Shorten text to fit the given width, based on rendered glyphs.
+
+    The text is truncated with an ellipsis when it does not fit.
+    """
+    font = ImageFont.truetype(UBUNTU_FONT, font_size)
+    if draw.textlength(text, font=font) <= max_width:
+        return text
+
+    ellipsis = "…"
+    lo, hi = 0, len(text)
+    while lo < hi:
+        mid = (lo + hi + 1) // 2
+        if draw.textlength(text[:mid] + ellipsis, font=font) <= max_width:
+            lo = mid
+        else:
+            hi = mid - 1
+    return text[:lo] + ellipsis
 
 
 def draw_text(  # pylint: disable=too-many-arguments
@@ -148,10 +191,11 @@ class Renderer:
                 pos,
             )
 
-        title = textwrap.shorten(title, 15, placeholder="…")
+        title = shorten_to_width(draw, title, 16, 116)
         draw_text(draw, title, (60, 16), 16, "ms", get_color("tile-fg"))
 
         if subtitle:
+            subtitle = shorten_to_width(draw, subtitle, 12, 116)
             draw_text(
                 draw, subtitle, (60, 114), 12, "ms", get_color("tile-fg")
             )
@@ -234,7 +278,7 @@ class Renderer:
         )
 
         if not mini:
-            lines = wrap_text(title, width=12, max_lines=2)
+            lines = wrap_text(draw, title, width=120, max_lines=2)
             text = "\n".join(lines)
             draw_text(
                 draw,
@@ -250,9 +294,15 @@ class Renderer:
         meter_right = image.width - margin_right - 1
 
         label_x = meter_right if anchor.startswith("r") else meter_left
+        label_width = (
+            image.width - meter_left
+            if anchor.startswith("l")
+            else meter_right - meter_left
+        )
+        label = shorten_to_width(draw, label, 14, label_width)
         draw_text(
             draw,
-            textwrap.shorten(label, width=12, placeholder="\u2026"),
+            label,
             (label_x, meter_middle - margin_bottom),
             14,
             anchor,
@@ -294,7 +344,7 @@ class Renderer:
         Draw a dial tile with a meter for a numeric value.
         """
         if mini:
-            label = textwrap.shorten(title, width=12, placeholder="\u2026")
+            label = title
             anchor = "ld"
         else:
             label = f"{round(100*value):3d}%"
@@ -376,7 +426,9 @@ class Renderer:
         )
 
         if not mini:
-            text = textwrap.shorten(item.title, width=15, placeholder="…")
+            text = shorten_to_width(
+                draw, item.title, 18, image.width - 2 * margin_left
+            )
             draw_text(
                 draw,
                 text,
@@ -387,8 +439,8 @@ class Renderer:
             )
 
             if item.subtitle:
-                text = textwrap.shorten(
-                    item.subtitle, width=22, placeholder="…"
+                text = shorten_to_width(
+                    draw, item.subtitle, 14, image.width - 2 * margin_left
                 )
                 draw_text(
                     draw,
@@ -418,47 +470,3 @@ class Renderer:
         return await self._draw_dial(
             title, icon, state, mini, anchor="ld", colors=colors
         )
-
-    def draw_time(self) -> Image.Image:
-        """
-        Draw time as a PIL Image.
-        """
-        image = Image.new(
-            "RGBA",
-            (440, 50),
-        )
-
-        draw = ImageDraw.Draw(image)
-
-        draw.rounded_rectangle(
-            (0, -1, image.width - 1, 49),
-            radius=16,
-            fill=self.get_color("status-bar-bg"),
-            outline=self.get_color("status-bar-border"),
-            width=1,
-            corners=(False, False, True, True),
-        )
-
-        dt = datetime.now()
-        date_str = f"{dt:%A} {dt.day} {dt:%b}"
-        time_str = f"{dt:%H}:{dt:%M}:{dt:%S}"
-
-        draw_text(
-            draw,
-            date_str,
-            (110, 24),
-            22,
-            "mm",
-            self.get_color("status-bar-fg"),
-        )
-
-        draw_text(
-            draw,
-            time_str,
-            (330, 24),
-            40,
-            "mm",
-            self.get_color("status-bar-fg"),
-        )
-
-        return image

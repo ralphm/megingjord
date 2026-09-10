@@ -91,12 +91,17 @@ SECTION_HANDLERS: dict[str, SectionHandler] = {}
 @define
 class Integration:
     """
-    An integration: the configuration sections it owns and whether it
-    is a device.
+    An integration: the configuration sections it owns, whether it is
+    a device, and a predicate for functional startup requirements.
+
+    The C{needs_start} predicate is called with the raw section data;
+    when it matches, the integration starts even without tiles or
+    dials referencing it (e.g. HA with calendar notifications).
     """
 
     sections: tuple[str, ...] = ()
     device: bool = False
+    needs_start: Callable[[dict[str, Any]], bool] | None = None
 
 
 # Namespace -> integration. The module name equals the namespace.
@@ -104,7 +109,10 @@ class Integration:
 # support integrations, since they consume the built context.
 INTEGRATIONS: dict[str, Integration] = {
     "streamdeck": Integration(sections=("streamdeck",), device=True),
-    "ha": Integration(sections=("home_assistant",)),
+    "ha": Integration(
+        sections=("home_assistant",),
+        needs_start=lambda data: bool(data.get("calendars")),
+    ),
     "pulseaudio": Integration(sections=("pulseaudio",)),
     "google_meet": Integration(sections=("google_meet",)),
 }

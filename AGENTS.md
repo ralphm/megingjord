@@ -19,6 +19,9 @@ Project SOW status: initialized
 This project uses a local Statement of Work system.
 
 SOWs and specs are **local-only working memory, never committed**:
+- Commit messages must not reference SOWs or specs (numbers, titles,
+  or file paths); they are local working memory, not part of the
+  committed history.
 
 - SOW working files live under `.agents/sow/{pending,current,active,done}/` and MUST NOT
   be committed to any branch.

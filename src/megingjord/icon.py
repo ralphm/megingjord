@@ -26,7 +26,9 @@ MDI_BASE = (
 logger = logging.getLogger(__name__)
 
 # Fallback icon used when an icon cannot be downloaded.
-PLACEHOLDER_ICON = Path(__file__).parent / "icons" / "help-circle.svg"
+PLACEHOLDER_ICON = (
+    Path(__file__).parent / "icons" / "mdi" / "image-off-outline.svg"
+)
 
 
 async def download_icon(icon: str, filename: Path) -> None:

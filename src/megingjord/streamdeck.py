@@ -28,9 +28,9 @@ from .registry import (
     ConfigError,
     register_dial_type,
     register_section,
-    section_namespace,
 )
 from .render import Renderer
+from .status_bar import StatusBar
 
 # Key animation settings.
 KEY_ANIMATION_PERIOD = 1.0
@@ -203,6 +203,7 @@ class DeckController:
     done: asyncio.Event = field(init=False, factory=asyncio.Event)
     keys: dict[int, Key] = field(init=False, factory=dict)
     dials: dict[int, Dial] = field(init=False, factory=dict)
+    status_bar: StatusBar = field(factory=StatusBar)
 
     # Status bar inhibited until this time
     status_inhibited: float = field(init=False, default=0)
@@ -363,7 +364,7 @@ class DeckController:
             self.tasks.add(task)
             task.add_done_callback(self.tasks.discard)
 
-        task = asyncio.create_task(self.clock_on_lcd())
+        task = asyncio.create_task(self.refresh_lcd())
         self.tasks.add(task)
         task.add_done_callback(self.tasks.discard)
 
@@ -375,6 +376,8 @@ class DeckController:
         """
         Start the deck
         """
+        self.status_bar.controller = self
+        await self.status_bar.start()
 
         try:
             while True:
@@ -431,6 +434,7 @@ class DeckController:
             self.deck.reset()
             self.deck.close()
             self.deck = None
+        await self.status_bar.stop()
         await asyncio.sleep(0.5)
 
     async def render_lcd(self) -> None:
@@ -452,10 +456,10 @@ class DeckController:
             image.alpha_composite(tile, (index * 220, 0))
 
         if status_bar:
-            time_image = self.renderer.draw_time()
+            status_image = await self.status_bar.render()
             image.alpha_composite(
-                time_image,
-                (round(image.width / 2.0 - time_image.width / 2.0), 0),
+                status_image,
+                (round(image.width / 2.0 - status_image.width / 2.0), 0),
             )
 
         image = image.convert("RGB")
@@ -464,9 +468,9 @@ class DeckController:
 
         self.deck.set_touchscreen_image(jpg, 0, 0, 800, 100)
 
-    async def clock_on_lcd(self) -> None:
+    async def refresh_lcd(self) -> None:
         """
-        Keep writing the time on the LCD display.
+        Keep writing the status bar on the LCD display.
         """
         while True:
             next_second = math.ceil(time.time())
@@ -597,9 +601,10 @@ def _build_streamdeck(data: dict[str, Any], context: BuildContext) -> None:
             raise ConfigError(f"keys[{key}]: must be a mapping")
 
     # Request the integrations this deck needs: those referenced by
-    # the dial and key types, and those with a configuration section
-    # (e.g. the Google Meet coordinator). Each requested integration
-    # interprets its own configuration and starts itself.
+    # the dial and key types. Each requested integration interprets
+    # its own configuration and starts itself. Integrations with
+    # functional requirements (e.g. HA with calendar notifications)
+    # are started by the main app before the device sections.
     namespaces: set[str] = set()
     for value in dials_data.values():
         type_ = value.get("type")
@@ -609,10 +614,6 @@ def _build_streamdeck(data: dict[str, Any], context: BuildContext) -> None:
         type_ = value.get("type")
         if type_ is not None and "." in type_:
             namespaces.add(type_.partition(".")[0])
-    for name in context.config.sections:
-        namespace = section_namespace(name)
-        if namespace is not None:
-            namespaces.add(namespace)
     for namespace in namespaces:
         context.request(namespace)
 

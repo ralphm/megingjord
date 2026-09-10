@@ -63,6 +63,10 @@ streamdeck:
 home_assistant:
   url: wss://homeassistant.local/api/websocket
   token: ${HA_TOKEN}
+  # Calendars watched for meeting notifications on the status bar.
+  calendars:
+    - calendar.work
+  preview_minutes: 10
 
 pulseaudio:
   output_weights:

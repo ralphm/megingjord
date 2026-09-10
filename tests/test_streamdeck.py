@@ -9,11 +9,11 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from aiohttp import web
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
 
 from megingjord.color_utils import get_colors
 from megingjord.icon import get_icon, svg_icon
-from megingjord.render import Renderer, wrap_text
+from megingjord.render import Renderer, shorten_to_width, wrap_text
 from megingjord.streamdeck import DeckController, DialEventType
 
 pytestmark = pytest.mark.filterwarnings("ignore::aiohttp.web.NotAppKeyWarning")
@@ -93,26 +93,78 @@ class TestWrapText:
     Tests for L{megingjord.render.wrap_text}.
     """
 
+    def make_draw(self) -> ImageDraw.ImageDraw:
+        """
+        A draw context for measuring text.
+        """
+        return ImageDraw.Draw(Image.new("RGBA", (140, 100)))
+
     def test_short(self) -> None:
         """
         A short title stays on one line.
         """
-        assert wrap_text("Office", 12, 2) == ["Office"]
+        draw = self.make_draw()
+        assert wrap_text(draw, "Office", 120, 2) == ["Office"]
 
     def test_wraps_to_two_lines(self) -> None:
         """
         A title that wraps to two lines keeps both.
         """
-        lines = wrap_text("Kantoor Ralph", 12, 2)
-        assert lines == ["Kantoor", "Ralph"]
+        draw = self.make_draw()
+        lines = wrap_text(draw, "Kantoor Ralph Plafond", 120, 2)
+        assert lines == ["Kantoor Ralph", "Plafond"]
 
     def test_truncates_overflow(self) -> None:
         """
         A title longer than max_lines is truncated with an ellipsis.
         """
-        lines = wrap_text("Kantoor Ralph Plafond", 12, 2)
+        draw = self.make_draw()
+        lines = wrap_text(draw, "Kantoor Ralph Plafond Extra Lang", 120, 2)
         assert len(lines) <= 2
         assert lines[1].endswith("…")
+
+
+class TestShortenToWidth:
+    """
+    Tests for L{megingjord.render.shorten_to_width}.
+    """
+
+    def make_draw(self) -> ImageDraw.ImageDraw:
+        """
+        A draw context for measuring text.
+        """
+        return ImageDraw.Draw(Image.new("RGBA", (440, 50)))
+
+    def test_short_unchanged(self) -> None:
+        """
+        Text that fits is returned unchanged.
+        """
+        draw = self.make_draw()
+        assert shorten_to_width(draw, "Standup sync", 18, 232) == (
+            "Standup sync"
+        )
+
+    def test_long_truncated(self) -> None:
+        """
+        Text that does not fit is truncated with an ellipsis.
+        """
+        draw = self.make_draw()
+        title = "A very long meeting title that will not fit"
+        shortened = shorten_to_width(draw, title, 18, 232)
+        assert shortened.endswith("…")
+        assert len(shortened) < len(title)
+
+    def test_fits_width(self) -> None:
+        """
+        The shortened text fits the given width.
+        """
+        draw = self.make_draw()
+        font = ImageFont.truetype(
+            "/usr/share/fonts/truetype/ubuntu/Ubuntu-R.ttf", 18
+        )
+        title = "A very long meeting title that will not fit"
+        shortened = shorten_to_width(draw, title, 18, 232)
+        assert draw.textlength(shortened, font=font) <= 232
 
 
 class TestSvgIcon:
@@ -285,12 +337,13 @@ class TestRenderBlocks:
         assert value.size == (140, 100)
 
     @pytest.mark.asyncio
-    async def test_draw_time(self) -> None:
+    async def test_status_bar_render(self) -> None:
         """
-        The status bar time renders.
+        The status bar renders on the controller.
         """
-        renderer = make_renderer()
-        image = renderer.draw_time()
+        controller = make_controller()
+        controller.status_bar.controller = controller
+        image = await controller.status_bar.render()
         assert image.size == (440, 50)
 
     @pytest.mark.asyncio

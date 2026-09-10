@@ -590,3 +590,82 @@ google_meet:
         ]
         assert isinstance(dials[0], PulseDefaultSinkDial)
         assert isinstance(dials[1], BrightnessDial)
+
+    def test_ha_calendars_start_without_tiles(self, tmp_path: Path) -> None:
+        """
+        HA with calendars starts even without HA tiles or dials.
+        """
+        from megingjord.registry import _loaded_integrations
+
+        _loaded_integrations.clear()
+
+        config = load_config(
+            write_config(
+                tmp_path,
+                """
+streamdeck:
+  dials:
+    1:
+      type: brightness
+home_assistant:
+  url: wss://example.test/api/websocket
+  token: secret
+  calendars:
+    - calendar.work
+""",
+            )
+        )
+        setup_from_config(self.make_app(), config)
+        assert "ha" in _loaded_integrations
+
+    def test_ha_without_calendars_not_started(self, tmp_path: Path) -> None:
+        """
+        HA without calendars and without tiles does not start.
+        """
+        from megingjord.registry import _loaded_integrations
+
+        _loaded_integrations.clear()
+
+        config = load_config(
+            write_config(
+                tmp_path,
+                """
+streamdeck:
+  dials:
+    1:
+      type: brightness
+home_assistant:
+  url: wss://example.test/api/websocket
+  token: secret
+""",
+            )
+        )
+        setup_from_config(self.make_app(), config)
+        assert "ha" not in _loaded_integrations
+
+    def test_pulseaudio_without_dials_not_started(
+        self, tmp_path: Path
+    ) -> None:
+        """
+        PulseAudio without pulseaudio dials does not start.
+        """
+        from megingjord.registry import _loaded_integrations
+
+        _loaded_integrations.clear()
+
+        config = load_config(
+            write_config(
+                tmp_path,
+                """
+streamdeck:
+  dials:
+    1:
+      type: brightness
+pulseaudio:
+  output_weights: []
+  input_weights: []
+""",
+            )
+        )
+        setup_from_config(self.make_app(), config)
+        assert "pulseaudio" not in _loaded_integrations

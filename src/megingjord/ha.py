@@ -23,6 +23,7 @@ from PIL import Image
 from StreamDeck.Devices.StreamDeck import StreamDeck
 
 from .color_utils import is_dark, rgb_to_hex, scale_rgb_down
+from .meetings import MeetingNotifier
 from .registry import (
     BuildContext,
     ConfigError,
@@ -1512,6 +1513,8 @@ class HomeAssistantConfig:
 
     url: str
     token: str
+    calendars: list[str] = []
+    preview_minutes: int = 10
 
 
 @define
@@ -1561,6 +1564,14 @@ def _build_home_assistant(data: dict[str, Any], context: BuildContext) -> None:
     context.ha = HAWebSocketClient(
         app=context.app, url=config.url, token=config.token
     )
+    if config.calendars:
+        notifier = MeetingNotifier(
+            ha=context.ha,
+            calendars=config.calendars,
+            status_bar=context.controller.status_bar,
+            preview_minutes=config.preview_minutes,
+        )
+        notifier.start()
 
 
 def _build_entity_dial(

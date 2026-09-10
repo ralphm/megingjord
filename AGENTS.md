@@ -338,6 +338,7 @@ Output/reference skills:
 - Lint: `env/bin/flake8 src/megingjord/ tests/`
 - Type check: `env/bin/mypy src/megingjord/`
 - The pre-commit hook runs black, isort, flake8, trim trailing whitespace, fix end of files, check toml, and check yaml.
+- Branch merges onto `master` use `--no-ff` (a merge commit, never a fast-forward).
 
 ### Project-specific overrides
 

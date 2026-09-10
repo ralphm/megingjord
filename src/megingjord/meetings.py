@@ -58,6 +58,8 @@ def get_next_meeting(
         if state is None:
             continue
         attributes = state.get("attributes", {})
+        if attributes.get("all_day"):
+            continue
         start = parse_calendar_time(attributes.get("start_time"))
         end = parse_calendar_time(attributes.get("end_time"))
         if start is None or end is None or end <= now:

@@ -5,6 +5,7 @@ Tests for L{megingjord.streamdeck}.
 """
 
 import asyncio
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -180,6 +181,21 @@ class TestSvgIcon:
         svg1 = await get_icon("shield", 80)
         svg2 = await get_icon("shield", 80)
         assert svg1 is svg2
+
+    @pytest.mark.asyncio
+    async def test_get_icon_download_failure_placeholder(
+        self, monkeypatch: Any
+    ) -> None:
+        """
+        A failed icon download falls back to the placeholder.
+        """
+
+        async def fail(_icon: str, _filename: Any) -> None:
+            raise OSError("offline")
+
+        monkeypatch.setattr("megingjord.icon.download_icon", fail)
+        svg = await get_icon("bogus-icon-name", 80)
+        assert len(svg) > 0
 
     @pytest.mark.asyncio
     async def test_svg_icon_colors_do_not_share(self) -> None:

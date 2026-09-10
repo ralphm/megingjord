@@ -175,6 +175,25 @@ class TestGetNextMeeting:
         assert meeting is not None
         assert meeting.title == "calendar.work"
 
+    def test_all_day_event_ignored(self) -> None:
+        """
+        An all-day event is not a meeting.
+        """
+        now = time.time()
+        ha = FakeHA()
+        ha.states = {
+            "calendar.work": {
+                "state": "off",
+                "attributes": {
+                    "message": "Birthday",
+                    "all_day": True,
+                    "start_time": fmt(now - 3600),
+                    "end_time": fmt(now + 86400),
+                },
+            }
+        }
+        assert get_next_meeting(ha, ["calendar.work"]) is None
+
 
 class TestMeetingNotifier:
     """

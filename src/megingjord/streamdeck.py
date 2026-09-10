@@ -474,7 +474,10 @@ class DeckController:
         """
         while True:
             next_second = math.ceil(time.time())
-            await self.render_lcd()
+            try:
+                await self.render_lcd()
+            except Exception:  # pylint: disable=broad-exception-caught
+                logger.error("Failed to render the LCD", exc_info=True)
             await asyncio.sleep(max(0, next_second - time.time()))
 
     def set_brightness(self, value: int) -> None:

@@ -25,6 +25,9 @@ MDI_BASE = (
 
 logger = logging.getLogger(__name__)
 
+# Fallback icon used when an icon cannot be downloaded.
+PLACEHOLDER_ICON = Path(__file__).parent / "icons" / "help-circle.svg"
+
 
 async def download_icon(icon: str, filename: Path) -> None:
     """
@@ -59,8 +62,15 @@ async def get_icon(icon: str, size: int) -> SVG:
     icon_filename = cache_dir / f"{icon}.svg"
 
     if not icon_filename.exists():
-        logger.debug(f"Need to download {icon}")
-        await download_icon(icon, icon_filename)
+        try:
+            await download_icon(icon, icon_filename)
+        except Exception:  # pylint: disable=broad-exception-caught
+            logger.warning(
+                "Failed to download icon %s; using placeholder",
+                icon,
+                exc_info=True,
+            )
+            icon_filename = PLACEHOLDER_ICON
     else:
         logger.debug(f"Using cached icon {icon}")
 

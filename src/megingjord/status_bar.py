@@ -196,7 +196,7 @@ class StatusBar:
             width=1,
         )
 
-        title_left = 68
+        title_left = 24
         if notification.icon is not None:
             icon_image = await renderer.draw_icon(
                 notification.icon,
@@ -204,8 +204,11 @@ class StatusBar:
                 48,
             )
             image.alpha_composite(icon_image, (11, 1))
+            title_left = 68
 
-        title = shorten_to_width(draw, notification.title, 18, 232)
+        title = shorten_to_width(
+            draw, notification.title, 18, 300 - title_left
+        )
         draw_text(
             draw,
             title,

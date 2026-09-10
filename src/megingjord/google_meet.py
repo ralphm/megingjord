@@ -197,7 +197,7 @@ class GoogleMeetTile:
             return
 
         if action in MUTE_CONTROLS:
-            if self.muted is None:
+            if self.meet.pending or self.muted is None:
                 icon = NOT_READY_ICONS[action]
                 colors = {
                     "tile-fg": "google-meet-fg",
@@ -225,7 +225,7 @@ class GoogleMeetTile:
             if self.subtitle and self.available:
                 subtitle = textwrap.shorten(self.subtitle, 20, placeholder="…")
 
-            if not self.ready or not self.available:
+            if self.meet.pending or not self.ready or not self.available:
                 colors = {
                     "tile-bg": "tile-inactive-bg",
                     "icon-primary": "icon-inactive",
@@ -254,7 +254,7 @@ class GoogleMeetTile:
             return
 
         action = self.current_action
-        if action is None or not self.connected:
+        if action is None or not self.connected or self.meet.pending:
             return
 
         if action in MUTE_CONTROLS:
@@ -285,6 +285,7 @@ class GoogleMeetCoordinator:
     socket: web.WebSocketResponse | None = field(init=False, default=None)
     states: dict[str, bool] = field(init=False, factory=dict)
     phase: str | None = field(init=False, default=None)
+    pending: bool = field(init=False, default=False)
     stopping: bool = field(init=False, default=False)
     subscribers: list[GoogleMeetTile] = field(init=False, factory=list)
     runner: web.AppRunner | None = field(init=False, default=None)
@@ -318,15 +319,22 @@ class GoogleMeetCoordinator:
         Handle incoming event.
         """
         if event["event"] == "phase":
-            # The extension sends the phase on every state change;
-            # only broadcast when it actually changed, so tiles do
-            # not reset their state on unrelated events.
-            if event["phase"] == self.phase:
+            # The extension marks the phase it expects after a command
+            # with pending; only broadcast when the phase or its
+            # pending state actually changed, so tiles do not reset
+            # their state on unrelated events.
+            pending = event.get("pending", False)
+            if event["phase"] == self.phase and pending == self.pending:
                 return
+            phase_changed = event["phase"] != self.phase
             self.phase = event["phase"]
-            self.states = {}
+            self.pending = pending
+            if phase_changed:
+                self.states = {}
         elif match := RE_MUTED_STATE.match(event["event"]):
             control = match.group(1)
+            if self.states.get(control) == event["muted"]:
+                return
             self.states[control] = event["muted"]
 
         for subscriber in self.subscribers:
@@ -359,6 +367,7 @@ class GoogleMeetCoordinator:
         self.socket = ws
         self.states = {}
         self.phase = None
+        self.pending = False
         for subscriber in self.subscribers:
             await subscriber.on_connection(True)
 

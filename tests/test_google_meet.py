@@ -85,6 +85,69 @@ class TestGoogleMeetCoordinator:
         )
 
     @pytest.mark.asyncio
+    async def test_muted_event_deduped(self) -> None:
+        """
+        A muted state event with the current value is not broadcast.
+        """
+        coordinator = GoogleMeetCoordinator(web.Application())
+        coordinator.states = {"mic": True}
+        subscriber = AsyncMock()
+        coordinator.subscribers.append(subscriber)
+        await coordinator.handle_event(
+            {"event": "micMutedState", "muted": True}
+        )
+        subscriber.handle_event.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_phase_event_pending_broadcast(self) -> None:
+        """
+        A pending phase event is broadcast and marks the phase pending.
+        """
+        coordinator = GoogleMeetCoordinator(web.Application())
+        coordinator.phase = "green_room"
+        subscriber = AsyncMock()
+        coordinator.subscribers.append(subscriber)
+        await coordinator.handle_event(
+            {"event": "phase", "phase": "meeting", "pending": True}
+        )
+        assert coordinator.phase == "meeting"
+        assert coordinator.pending is True
+        subscriber.handle_event.assert_awaited_once_with(
+            {"event": "phase", "phase": "meeting", "pending": True}
+        )
+
+    @pytest.mark.asyncio
+    async def test_phase_event_confirmed_clears_pending(self) -> None:
+        """
+        A confirmed phase event clears the pending state.
+        """
+        coordinator = GoogleMeetCoordinator(web.Application())
+        coordinator.phase = "meeting"
+        coordinator.pending = True
+        subscriber = AsyncMock()
+        coordinator.subscribers.append(subscriber)
+        await coordinator.handle_event({"event": "phase", "phase": "meeting"})
+        assert coordinator.pending is False
+        subscriber.handle_event.assert_awaited_once_with(
+            {"event": "phase", "phase": "meeting"}
+        )
+
+    @pytest.mark.asyncio
+    async def test_phase_event_pending_deduped(self) -> None:
+        """
+        A pending phase event with the current phase is not broadcast.
+        """
+        coordinator = GoogleMeetCoordinator(web.Application())
+        coordinator.phase = "meeting"
+        coordinator.pending = True
+        subscriber = AsyncMock()
+        coordinator.subscribers.append(subscriber)
+        await coordinator.handle_event(
+            {"event": "phase", "phase": "meeting", "pending": True}
+        )
+        subscriber.handle_event.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_start_closes_socket_before_cleanup(self) -> None:
         """
         The websocket is closed before the server is cleaned up, so
@@ -267,6 +330,44 @@ class TestGoogleMeetTile:
         )
 
     @pytest.mark.asyncio
+    async def test_pending_renders_inactive(self) -> None:
+        """
+        A tile renders inactive while the phase is pending.
+        """
+        tile = make_tile("meeting", action="hangup")
+        tile.meet.pending = True
+        await tile._draw()
+        tile.controller.renderer.draw_state_tile.assert_awaited_once_with(
+            title="Leave call",
+            subtitle=None,
+            colors={
+                "tile-bg": "tile-inactive-bg",
+                "icon-primary": "icon-inactive",
+            },
+            icon="phone-hangup",
+        )
+
+    @pytest.mark.asyncio
+    async def test_pending_mute_tile_not_ready(self) -> None:
+        """
+        A mute tile renders not-ready while the phase is pending.
+        """
+        tile = make_tile("meeting", action="mic")
+        tile.muted = True
+        tile.meet.pending = True
+        await tile._draw()
+        tile.controller.renderer.draw_state_tile.assert_awaited_once_with(
+            title="mic",
+            subtitle=None,
+            colors={
+                "tile-fg": "google-meet-fg",
+                "tile-bg": "tile-inactive-bg",
+                "icon-primary": "icon-inactive",
+            },
+            icon="microphone-off",
+        )
+
+    @pytest.mark.asyncio
     async def test_phase_event_updates_action(self) -> None:
         """
         A phase event switches the phased tile's action.
@@ -345,6 +446,19 @@ class TestGoogleMeetTile:
         Pressing a blank tile does nothing.
         """
         tile = make_tile("lobby", phases={"meeting": "hangup"})
+        with patch.object(
+            GoogleMeetCoordinator, "send_event", new=AsyncMock()
+        ) as send:
+            await tile.on_key_change(True)
+        send.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_key_press_pending_ignored(self) -> None:
+        """
+        Pressing a tile while the phase is pending does nothing.
+        """
+        tile = make_tile("meeting", action="hangup")
+        tile.meet.pending = True
         with patch.object(
             GoogleMeetCoordinator, "send_event", new=AsyncMock()
         ) as send:

@@ -40,7 +40,7 @@ JSON messages over `ws://127.0.0.1:2394`.
 
 | Event | Payload | Notes |
 |---|---|---|
-| `phase` | `{"event": "phase", "phase": "lobby"\|"green_room"\|"green_room_switch"\|"meeting"\|"exit_hall"\|"none"}` | Sent on change and on (re)connect; `green_room_switch` is the green room while a call runs on another device; `none` means no Meet tab is open |
+| `phase` | `{"event": "phase", "phase": "lobby"\|"green_room"\|"green_room_switch"\|"meeting"\|"exit_hall"\|"none", "pending": bool}` | Sent on change and on (re)connect; `green_room_switch` is the green room while a call runs on another device; `none` means no Meet tab is open; `pending: true` marks the phase a deck command leads to, before the DOM confirms it |
 | `micMutedState` | `{"event": "micMutedState", "muted": bool}` | |
 | `cameraMutedState` | `{"event": "cameraMutedState", "muted": bool}` | |
 | `handMutedState` | `{"event": "handMutedState", "muted": bool}` | `muted` means hand not raised |
@@ -83,13 +83,26 @@ The URL changes before the new page renders. Phase changes are reported
 immediately from the action that caused them:
 
 - A deck command reports the phase it leads to (e.g. `startNextMeeting`
-  reports `green_room`, `leaveCall` reports `exit_hall`), so the tiles
-  react without waiting for the page to render.
+  reports `green_room`, `leaveCall` reports `exit_hall`) with
+  `pending: true`, so the tiles react without waiting for the page to
+  render. Megingjord renders the pending phase's tiles inactive until
+  the DOM confirms the phase (`pending: false`).
+- While a phase is pending, reports of any other phase (stale DOM
+  reads, the URL watcher's `lobby` after leaving a call) are
+  suppressed; the intent stands until the DOM confirms the expected
+  phase or a 5 s timeout falls back to the DOM.
 - The URL watcher reports `lobby` for lobby paths (`/`, `/home`,
   `/landing`), covering navigations not caused by a deck command.
 
 The DOM-based detection refines the phase once the page renders (e.g.
 `green_room` vs `meeting`).
+
+## State forwarding
+
+The background script merges per-tab state and forwards only changed
+fields to Megingjord, so a state update does not re-send every event.
+After a phase change the full state is re-forwarded, so Megingjord
+does not miss the mute states that follow.
 
 ## Multi-tab policy
 

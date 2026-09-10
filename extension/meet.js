@@ -255,14 +255,38 @@ const EXPECTED_PHASE = {
   enterMeeting: "meeting",
   switchHere: "meeting",
   leaveCall: "exit_hall",
-  rejoin: "meeting",
+  rejoin: "green_room",
   returnHome: "lobby",
 };
+
+// After a command, the DOM may still show the pre-command phase for a
+// while. The expected phase is reported immediately with pending: true;
+// contradictory reports are suppressed until the DOM confirms the
+// expected phase (pending: false) or the intent times out.
+const PENDING_TIMEOUT_MS = 5000;
+let pendingPhase = null;
+let pendingTimer = null;
+
+function isPendingPhase(phase) {
+  return pendingPhase !== null && phase !== pendingPhase;
+}
 
 let lastState = null;
 
 function sendState(force = false) {
   const state = readState();
+  if (pendingPhase !== null) {
+    if (state.phase === pendingPhase) {
+      // The DOM confirmed the expected phase; the intent is fulfilled.
+      clearTimeout(pendingTimer);
+      pendingTimer = null;
+      pendingPhase = null;
+    } else if (!force) {
+      // Stale DOM read; keep the intent standing.
+      return;
+    }
+  }
+  state.pending = pendingPhase !== null;
   if (force || JSON.stringify(state) !== JSON.stringify(lastState)) {
     lastState = state;
     browser.runtime.sendMessage({ type: "state", state });
@@ -270,7 +294,9 @@ function sendState(force = false) {
 }
 
 // Watch for phase changes (childList) and mute state changes (attributes).
-const observer = new MutationObserver(sendState);
+// The wrapper is required: the observer passes its arguments to the
+// callback, which would otherwise land in sendState's force parameter.
+const observer = new MutationObserver(() => sendState());
 observer.observe(document.body, {
   childList: true,
   attributes: true,
@@ -301,24 +327,39 @@ setInterval(() => {
   }
   lastUrl = location.href;
   const phase = phaseFromUrl();
-  if (phase !== undefined && phase !== detectPhase()) {
-    lastState = { ...lastState, phase };
-    browser.runtime.sendMessage({ type: "state", state: { phase } });
+  if (
+    phase !== undefined &&
+    phase !== detectPhase() &&
+    !isPendingPhase(phase)
+  ) {
+    lastState = { ...lastState, phase, pending: pendingPhase !== null };
+    browser.runtime.sendMessage({
+      type: "state",
+      state: { phase, pending: pendingPhase !== null },
+    });
   }
 }, 250);
 
 browser.runtime.onMessage.addListener((message) => {
   if (message.type === "getState") {
-    sendState();
+    sendState(true);
   } else if (message.type === "command") {
     const handler = COMMANDS[message.event];
     if (handler && handler()) {
       const expected = EXPECTED_PHASE[message.event];
       if (expected) {
-        lastState = { ...lastState, phase: expected };
+        pendingPhase = expected;
+        clearTimeout(pendingTimer);
+        pendingTimer = setTimeout(() => {
+          // The expected phase never appeared; fall back to the DOM.
+          pendingPhase = null;
+          pendingTimer = null;
+          sendState();
+        }, PENDING_TIMEOUT_MS);
+        lastState = { ...lastState, phase: expected, pending: true };
         browser.runtime.sendMessage({
           type: "state",
-          state: { phase: expected },
+          state: { phase: expected, pending: true },
         });
       }
       // Re-read state shortly after the click; Meet updates the DOM

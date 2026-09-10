@@ -25,11 +25,16 @@ let reconnectTimer = null;
 // tabId -> {phase, micMuted, cameraMuted, handMuted, updated}
 const tabStates = new Map();
 
+// Values last forwarded to Megingjord for the current best tab.
+let lastForwarded = null; // { tabId, values }
+
 function connect() {
   socket = new WebSocket(wsUrl);
 
   socket.onopen = () => {
     console.log("Megingjord Meet: connected to Megingjord");
+    // Megingjord resets its state on reconnect; re-forward everything.
+    lastForwarded = null;
     if (tabStates.size === 0) {
       // No Meet tabs open; make sure Megingjord does not keep stale keys.
       sendToMegingjord({ event: "phase", phase: "none" });
@@ -92,7 +97,9 @@ function sendToMegingjord(message) {
   }
 }
 
-// Forward the state of the given tab if it is the best tab.
+// Forward the state of the given tab if it is the best tab. Only
+// changed fields are sent; after a phase change the full state is
+// re-forwarded so Megingjord does not miss the mute states.
 function forwardState(tabId) {
   if (tabId !== bestTabId()) {
     return;
@@ -101,38 +108,64 @@ function forwardState(tabId) {
   if (!state) {
     return;
   }
-  if (state.phase !== undefined) {
-    sendToMegingjord({ event: "phase", phase: state.phase });
+  if (!lastForwarded || lastForwarded.tabId !== tabId) {
+    lastForwarded = { tabId, values: {} };
   }
-  if (state.micMuted !== undefined) {
+  const previous = lastForwarded.values;
+  const phaseChanged =
+    state.phase !== previous.phase || state.pending !== previous.pending;
+  const changed = {};
+  for (const [key, value] of Object.entries(state)) {
+    if (key === "updated" || value === undefined) {
+      continue;
+    }
+    if (phaseChanged || value !== previous[key]) {
+      changed[key] = value;
+    }
+  }
+  if (Object.keys(changed).length === 0) {
+    return;
+  }
+  lastForwarded.values = { ...previous, ...changed };
+  if (
+    state.phase !== undefined &&
+    (changed.phase !== undefined || changed.pending !== undefined)
+  ) {
+    sendToMegingjord({
+      event: "phase",
+      phase: state.phase,
+      pending: state.pending === true,
+    });
+  }
+  if (changed.micMuted !== undefined) {
     sendToMegingjord({ event: "micMutedState", muted: state.micMuted });
   }
-  if (state.cameraMuted !== undefined) {
+  if (changed.cameraMuted !== undefined) {
     sendToMegingjord({ event: "cameraMutedState", muted: state.cameraMuted });
   }
-  if (state.handMuted !== undefined) {
+  if (changed.handMuted !== undefined) {
     sendToMegingjord({ event: "handMutedState", muted: state.handMuted });
   }
-  if (state.enterReady !== undefined) {
+  if (changed.enterReady !== undefined) {
     sendToMegingjord({ event: "enterReady", ready: state.enterReady });
   }
-  if (state.enterLabel !== undefined) {
+  if (changed.enterLabel !== undefined) {
     sendToMegingjord({ event: "enterLabel", label: state.enterLabel });
   }
-  if (state.hasNextMeeting !== undefined) {
+  if (changed.hasNextMeeting !== undefined) {
     sendToMegingjord({
       event: "hasNextMeeting",
       hasNextMeeting: state.hasNextMeeting,
     });
   }
-  if (state.nextMeetingTitle !== undefined) {
+  if (changed.nextMeetingTitle !== undefined) {
     sendToMegingjord({
       event: "subtitle",
       control: "start-next",
       subtitle: state.nextMeetingTitle,
     });
   }
-  if (state.meetingTitle !== undefined) {
+  if (changed.meetingTitle !== undefined) {
     sendToMegingjord({
       event: "subtitle",
       control: "enter",
@@ -145,7 +178,19 @@ browser.runtime.onMessage.addListener((message, sender) => {
   if (!sender.tab || message.type !== "state") {
     return;
   }
-  tabStates.set(sender.tab.id, { ...message.state, updated: Date.now() });
+  // Structured clone preserves undefined (unlike JSON); drop it so a
+  // mid-transition read cannot clobber known values like the phase.
+  const state = {};
+  for (const [key, value] of Object.entries(message.state)) {
+    if (value !== undefined) {
+      state[key] = value;
+    }
+  }
+  tabStates.set(sender.tab.id, {
+    ...(tabStates.get(sender.tab.id) || {}),
+    ...state,
+    updated: Date.now(),
+  });
   forwardState(sender.tab.id);
 });
 

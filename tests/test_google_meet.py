@@ -133,6 +133,28 @@ class TestGoogleMeetCoordinator:
         )
 
     @pytest.mark.asyncio
+    async def test_muted_event_broadcast_after_confirmed_phase(
+        self,
+    ) -> None:
+        """
+        A muted state event is broadcast after a confirmed phase
+        event wiped the states.
+        """
+        coordinator = GoogleMeetCoordinator(web.Application())
+        coordinator.phase = "meeting"
+        coordinator.pending = True
+        coordinator.states = {"mic": False}
+        subscriber = AsyncMock()
+        coordinator.subscribers.append(subscriber)
+        await coordinator.handle_event({"event": "phase", "phase": "meeting"})
+        await coordinator.handle_event(
+            {"event": "micMutedState", "muted": False}
+        )
+        subscriber.handle_event.assert_awaited_with(
+            {"event": "micMutedState", "muted": False}
+        )
+
+    @pytest.mark.asyncio
     async def test_phase_event_pending_deduped(self) -> None:
         """
         A pending phase event with the current phase is not broadcast.

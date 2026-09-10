@@ -326,11 +326,12 @@ class GoogleMeetCoordinator:
             pending = event.get("pending", False)
             if event["phase"] == self.phase and pending == self.pending:
                 return
-            phase_changed = event["phase"] != self.phase
             self.phase = event["phase"]
             self.pending = pending
-            if phase_changed:
-                self.states = {}
+            # Tiles reset their state on every phase event; wipe the
+            # known states so the mute events that follow are
+            # broadcast again instead of being deduplicated.
+            self.states = {}
         elif match := RE_MUTED_STATE.match(event["event"]):
             control = match.group(1)
             if self.states.get(control) == event["muted"]:

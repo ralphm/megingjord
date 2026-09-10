@@ -60,40 +60,55 @@ def draw_clock(
     """
     Draw the current date and time on the status bar.
 
-    The clock is right-aligned and stacked: time above, date below.
-    In condensed form the clock is smaller, leaving room for a
-    notification card.
+    The full-width layout shows the date on the left and the time on
+    the right. In condensed form the clock is smaller and stacked on
+    the right, leaving room for a notification card.
     """
     dt = datetime.now()
     time_str = f"{dt:%H}:{dt:%M}:{dt:%S}"
     if condensed:
         date_str = f"{dt:%a} {dt.day} {dt:%b}"
         time_size, date_size = 24, 12
+
+        time_font = ImageFont.truetype(UBUNTU_FONT, time_size)
+        time_width = draw.textlength(time_str, font=time_font)
+        draw_text(
+            draw,
+            time_str,
+            (CLOCK_RIGHT - time_width / 2, 17),
+            time_size,
+            "mm",
+            renderer.get_color("status-bar-fg"),
+        )
+
+        date_font = ImageFont.truetype(UBUNTU_FONT, date_size)
+        date_width = draw.textlength(date_str, font=date_font)
+        draw_text(
+            draw,
+            date_str,
+            (CLOCK_RIGHT - date_width / 2, 40),
+            date_size,
+            "mm",
+            renderer.get_color("status-bar-fg"),
+        )
     else:
         date_str = f"{dt:%A} {dt.day} {dt:%b}"
-        time_size, date_size = 32, 16
-
-    time_font = ImageFont.truetype(UBUNTU_FONT, time_size)
-    time_width = draw.textlength(time_str, font=time_font)
-    draw_text(
-        draw,
-        time_str,
-        (CLOCK_RIGHT - time_width / 2, 17),
-        time_size,
-        "mm",
-        renderer.get_color("status-bar-fg"),
-    )
-
-    date_font = ImageFont.truetype(UBUNTU_FONT, date_size)
-    date_width = draw.textlength(date_str, font=date_font)
-    draw_text(
-        draw,
-        date_str,
-        (CLOCK_RIGHT - date_width / 2, 40),
-        date_size,
-        "mm",
-        renderer.get_color("status-bar-fg"),
-    )
+        draw_text(
+            draw,
+            date_str,
+            (110, 24),
+            22,
+            "mm",
+            renderer.get_color("status-bar-fg"),
+        )
+        draw_text(
+            draw,
+            time_str,
+            (330, 24),
+            40,
+            "mm",
+            renderer.get_color("status-bar-fg"),
+        )
 
 
 @define

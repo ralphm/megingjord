@@ -101,7 +101,7 @@ class PulseOutput:
     configuration.
     """
 
-    coordinator: PulseAudioCoordinator = field(repr=False)
+    coordinator: PulseAudioCoordinator = field(repr=False, eq=False)
     card: PulseCardInfo
     port: PulseCardPortInfo
     active: bool = False
@@ -218,7 +218,7 @@ class PulseInput:
     configuration.
     """
 
-    coordinator: PulseAudioCoordinator = field(repr=False)
+    coordinator: PulseAudioCoordinator = field(repr=False, eq=False)
     card: PulseCardInfo
     port: PulseCardPortInfo
     active: bool = False

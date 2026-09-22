@@ -96,7 +96,7 @@ class GoogleMeetTile:
     """
 
     key: int
-    meet: GoogleMeetCoordinator
+    meet: GoogleMeetCoordinator = field(repr=False, eq=False)
     action: str | None = None
     phases: dict[str, str] | None = None
 

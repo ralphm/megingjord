@@ -133,3 +133,54 @@ def test_weight_rule_non_matching_port() -> None:
         port=make_port(name="analog-output", priority=100),
     )
     assert output.priority == 100
+
+
+def test_output_equality_matches_coordinator_default() -> None:
+    """
+    An output compares equal to the coordinator's default output.
+
+    The dial scroller picks the selected item by comparing outputs with
+    the coordinator's default output. The coordinator is excluded from
+    equality, as the mutually referencing structs would otherwise recurse
+    forever (attrs >= 24.1.0 generates an "and"-chained __eq__).
+    """
+    coordinator = make_coordinator([])
+    card = make_card()
+    port = make_port()
+    default = PulseOutput(coordinator=coordinator, card=card, port=port)
+    coordinator.default_output = default
+
+    assert (
+        PulseOutput(coordinator=coordinator, card=card, port=port) == default
+    )
+    assert (
+        PulseOutput(
+            coordinator=coordinator,
+            card=make_card(name="card1"),
+            port=port,
+        )
+        != default
+    )
+
+
+def test_input_equality_matches_coordinator_default() -> None:
+    """
+    An input compares equal to the coordinator's default input.
+
+    Mirror of the source-scroller selection check.
+    """
+    coordinator = make_coordinator([])
+    card = make_card()
+    port = make_port(name="analog-input")
+    default = PulseInput(coordinator=coordinator, card=card, port=port)
+    coordinator.default_input = default
+
+    assert PulseInput(coordinator=coordinator, card=card, port=port) == default
+    assert (
+        PulseInput(
+            coordinator=coordinator,
+            card=make_card(name="card1"),
+            port=port,
+        )
+        != default
+    )

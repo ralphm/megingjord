@@ -1,0 +1,371 @@
+// Megingjord Google Meet extension - content script.
+//
+// Runs in Google Meet tabs. Detects the meeting phase (lobby, green room,
+// meeting, exit hall) and the mic/camera/hand states, and executes commands
+// by clicking the corresponding Meet UI buttons.
+//
+// State is reported to the background script on change, on a low-frequency
+// poll (background tabs have throttled timers, so this is a fallback for
+// missed mutations), and when the tab becomes visible again.
+//
+// Selectors were verified against the live Meet UI (September 2026).
+
+// Phase detection. The meeting check comes first: the exit hall heading
+// jsname also appears in the green room (as the meeting title), so the exit
+// hall check requires the absence of mute controls.
+function detectPhase() {
+  const path = window.location.pathname;
+  if (path === "/" || path === "/home" || path === "/landing") {
+    return "lobby";
+  }
+  if (document.querySelector('[jsname="CQylAd"]')) {
+    return "meeting";
+  }
+  if (document.querySelector('[jsname="Qx7uuf"]')) {
+    // The switch button only exists while a call runs on another
+    // device; report it as a distinct phase so Megingjord can show a
+    // different button layout.
+    return queryByText("Switch here") ? "green_room_switch" : "green_room";
+  }
+  if (
+    document.querySelector('[jsname="r4nke"]') &&
+    document.querySelector(REJOIN_SELECTOR) &&
+    !document.querySelector("[data-is-muted]")
+  ) {
+    return "exit_hall";
+  }
+  return undefined;
+}
+
+// The URL changes before the new page renders; report the lobby phase
+// from the URL immediately. Phase changes into a call are reported by
+// the command that caused them, since the URL cannot distinguish the
+// meeting from the green room.
+function phaseFromUrl() {
+  const path = window.location.pathname;
+  if (path === "/" || path === "/home" || path === "/landing") {
+    return "lobby";
+  }
+  return undefined;
+}
+
+const MIC_SELECTORS = [
+  'button[jsname="hw0c9"]', // verified: meeting and green room
+  'div[role="button"][jsname="hw0c9"]', // older Join screen
+  'div[jsname="Dg9Wp"] [jsname="BOHaEe"]', // pre-2024 redesign
+];
+
+const CAMERA_SELECTORS = [
+  'button[jsname="psRWwc"]', // verified: meeting and green room
+  'div[role="button"][jsname="psRWwc"]', // older Join screen
+  'div[jsname="R3GXJb"] [jsname="BOHaEe"]', // pre-2024 redesign
+];
+
+const HAND_SELECTORS = ['button[jsname="FpSaz"]']; // verified: meeting
+
+const LEAVE_SELECTOR = '[jsname="CQylAd"]'; // verified: meeting
+const LEAVE_CONFIRMATION_SELECTOR = '[data-mdc-dialog-action="Pd96ce"]';
+
+const START_INSTANT_SELECTOR = '[jsname="CuSyi"]'; // verified: lobby
+const SCHEDULED_SECTION_SELECTOR = 'SECTION[jsname="n39Uf"]'; // verified: lobby
+const ENTER_MEETING_SELECTOR = '[jsname="Qx7uuf"]'; // verified: green room
+const ENTER_MEETING_HOST_SELECTOR = '[jsname="z0F4cd"]'; // verified: green room (host)
+const REJOIN_SELECTOR = 'button[jsname="W6suGc"]'; // verified: exit hall, inner button
+const RETURN_HOME_SELECTOR = '[jsname="WIVZEd"] button'; // verified: exit hall
+const RETURN_HOME_GREEN_ROOM_SELECTOR =
+  '[aria-label="Return to home screen"]'; // verified: green room
+
+function firstMatch(selectors) {
+  for (const selector of selectors) {
+    const element = document.querySelector(selector);
+    if (element) {
+      return element;
+    }
+  }
+  return null;
+}
+
+// The join button is a DIV wrapper around the actual button element; the
+// disabled state lives on the inner button.
+function getJoinButton() {
+  const outer = firstMatch([
+    ENTER_MEETING_SELECTOR,
+    ENTER_MEETING_HOST_SELECTOR,
+  ]);
+  if (!outer) {
+    return null;
+  }
+  return outer.querySelector("button") || outer;
+}
+
+function isDisabled(element) {
+  return (
+    element.disabled || element.getAttribute("aria-disabled") === "true"
+  );
+}
+
+// The button text includes the material icon name (e.g. "add_to_queue");
+// strip it so the label is the visible text only.
+function buttonLabel(button) {
+  const clone = button.cloneNode(true);
+  clone.querySelector("i.google-symbols")?.remove();
+  return (clone.textContent || "").trim();
+}
+
+// The first meeting card in the Scheduled section.
+function firstScheduledCard() {
+  const section = document.querySelector(SCHEDULED_SECTION_SELECTOR);
+  if (!section) {
+    return null;
+  }
+  return section.querySelector('[jsname="PoaP2b"]');
+}
+
+// The hand button does not use aria-pressed; raised is indicated by a CSS
+// class and the aria-label flipping to "Lower hand".
+function isHandRaised(button) {
+  const cls = (button.className || "").toString();
+  if (cls.includes("HlOR8e")) {
+    return true;
+  }
+  const label = (button.getAttribute("aria-label") || "").toLowerCase();
+  return label.includes("lower hand");
+}
+
+function readState() {
+  const state = { phase: detectPhase() };
+
+  // Fields that do not apply to the current phase are reported as
+  // undefined so the background clears them instead of keeping stale
+  // values (e.g. the mute states in the exit hall).
+  const micButton = firstMatch(MIC_SELECTORS);
+  state.micMuted = micButton
+    ? micButton.dataset.isMuted === "true"
+    : undefined;
+
+  const cameraButton = firstMatch(CAMERA_SELECTORS);
+  state.cameraMuted = cameraButton
+    ? cameraButton.dataset.isMuted === "true"
+    : undefined;
+
+  const handButton = firstMatch(HAND_SELECTORS);
+  state.handMuted = handButton ? !isHandRaised(handButton) : undefined;
+
+  if (state.phase === "green_room" || state.phase === "green_room_switch") {
+    const enterButton = getJoinButton();
+    state.enterReady = enterButton ? !isDisabled(enterButton) : undefined;
+    state.enterLabel = enterButton ? buttonLabel(enterButton) : undefined;
+  } else {
+    state.enterReady = undefined;
+    state.enterLabel = undefined;
+  }
+
+  if (state.phase === "lobby") {
+    const card = firstScheduledCard();
+    state.hasNextMeeting = !!card;
+    state.nextMeetingTitle = card
+      ? (card.getAttribute("aria-label") || card.textContent || "").trim()
+      : undefined;
+  } else {
+    state.hasNextMeeting = undefined;
+    state.nextMeetingTitle = undefined;
+  }
+
+  return state;
+}
+
+function clickButton(selector, name) {
+  const element = document.querySelector(selector);
+  if (element) {
+    element.click();
+    return true;
+  }
+  console.warn(`Megingjord Meet: button not found: ${name}`);
+  return false;
+}
+
+function clickByText(text) {
+  const element = queryByText(text);
+  if (element) {
+    element.click();
+    return true;
+  }
+  return false;
+}
+
+function queryByText(text) {
+  for (const element of document.querySelectorAll("button,[role=button]")) {
+    if ((element.textContent || "").trim() === text) {
+      return element;
+    }
+  }
+  return null;
+}
+
+const COMMANDS = {
+  toggleMic: () => clickButton(MIC_SELECTORS.join(","), "mic"),
+  toggleCamera: () => clickButton(CAMERA_SELECTORS.join(","), "camera"),
+  toggleHand: () => clickButton(HAND_SELECTORS.join(","), "hand"),
+  leaveCall: () => {
+    // Some meetings ask to confirm leaving; a second press selects
+    // "just leave the call".
+    return (
+      clickButton(LEAVE_CONFIRMATION_SELECTOR, "leave confirmation") ||
+      clickButton(LEAVE_SELECTOR, "leave")
+    );
+  },
+  startInstantMeeting: () =>
+    clickButton(START_INSTANT_SELECTOR, "start instant meeting") ||
+    clickButton('[aria-label="New meeting"]', "new meeting"),
+  startNextMeeting: () => {
+    const card = firstScheduledCard();
+    if (card) {
+      card.click();
+      return true;
+    }
+    console.warn("Megingjord Meet: button not found: start next meeting");
+    return false;
+  },
+  enterMeeting: () => {
+    const button = getJoinButton();
+    if (!button) {
+      console.warn("Megingjord Meet: button not found: join now");
+      return false;
+    }
+    if (isDisabled(button)) {
+      console.warn("Megingjord Meet: join button not ready");
+      return false;
+    }
+    button.click();
+    return true;
+  },
+  switchHere: () => clickByText("Switch here"),
+  rejoin: () => clickButton(REJOIN_SELECTOR, "rejoin") || clickByText("Rejoin"),
+  returnHome: () =>
+    clickButton(RETURN_HOME_SELECTOR, "return home") ||
+    clickButton(RETURN_HOME_GREEN_ROOM_SELECTOR, "return home (green room)") ||
+    clickByText("Return to home screen"),
+};
+
+// The phase a command leads to; reported immediately so the tiles
+// react without waiting for the page to render. The DOM-based
+// detection refines it once the page renders.
+const EXPECTED_PHASE = {
+  startInstantMeeting: "meeting",
+  startNextMeeting: "green_room",
+  enterMeeting: "meeting",
+  switchHere: "meeting",
+  leaveCall: "exit_hall",
+  rejoin: "green_room",
+  returnHome: "lobby",
+};
+
+// After a command, the DOM may still show the pre-command phase for a
+// while. The expected phase is reported immediately with pending: true;
+// contradictory reports are suppressed until the DOM confirms the
+// expected phase (pending: false) or the intent times out.
+const PENDING_TIMEOUT_MS = 5000;
+let pendingPhase = null;
+let pendingTimer = null;
+
+function isPendingPhase(phase) {
+  return pendingPhase !== null && phase !== pendingPhase;
+}
+
+let lastState = null;
+
+function sendState(force = false) {
+  const state = readState();
+  if (pendingPhase !== null) {
+    if (state.phase === pendingPhase) {
+      // The DOM confirmed the expected phase; the intent is fulfilled.
+      clearTimeout(pendingTimer);
+      pendingTimer = null;
+      pendingPhase = null;
+    } else {
+      // Stale DOM read; keep the intent standing.
+      return;
+    }
+  }
+  state.pending = pendingPhase !== null;
+  if (force || JSON.stringify(state) !== JSON.stringify(lastState)) {
+    lastState = state;
+    browser.runtime.sendMessage({ type: "state", state });
+  }
+}
+
+// Watch for phase changes (childList) and mute state changes (attributes).
+// The wrapper is required: the observer passes its arguments to the
+// callback, which would otherwise land in sendState's force parameter.
+const observer = new MutationObserver(() => sendState());
+observer.observe(document.body, {
+  childList: true,
+  attributes: true,
+  attributeFilter: ["data-is-muted", "aria-pressed"],
+  subtree: true,
+});
+
+// Fallback for changes missed while the tab was throttled in the background.
+setInterval(sendState, 1000);
+
+// Keep the background event page alive (it is unloaded after ~30s of
+// inactivity, which would kill the WebSocket) and re-push state after
+// Megingjord restarts.
+setInterval(() => sendState(true), 20000);
+
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) {
+    sendState();
+  }
+});
+
+// Watch for SPA navigations: the URL changes before the new page
+// renders, so report the phase from the URL immediately.
+let lastUrl = location.href;
+setInterval(() => {
+  if (location.href === lastUrl) {
+    return;
+  }
+  lastUrl = location.href;
+  const phase = phaseFromUrl();
+  if (
+    phase !== undefined &&
+    phase !== detectPhase() &&
+    !isPendingPhase(phase)
+  ) {
+    lastState = { ...lastState, phase, pending: pendingPhase !== null };
+    browser.runtime.sendMessage({
+      type: "state",
+      state: { phase, pending: pendingPhase !== null },
+    });
+  }
+}, 250);
+
+browser.runtime.onMessage.addListener((message) => {
+  if (message.type === "getState") {
+    sendState(true);
+  } else if (message.type === "command") {
+    const handler = COMMANDS[message.event];
+    if (handler && handler()) {
+      const expected = EXPECTED_PHASE[message.event];
+      if (expected) {
+        pendingPhase = expected;
+        clearTimeout(pendingTimer);
+        pendingTimer = setTimeout(() => {
+          // The expected phase never appeared; fall back to the DOM.
+          pendingPhase = null;
+          pendingTimer = null;
+          sendState();
+        }, PENDING_TIMEOUT_MS);
+        lastState = { ...lastState, phase: expected, pending: true };
+        browser.runtime.sendMessage({
+          type: "state",
+          state: { phase: expected, pending: true },
+        });
+      }
+      // Re-read state shortly after the click; Meet updates the DOM
+      // asynchronously.
+      setTimeout(sendState, 100);
+    }
+  }
+});

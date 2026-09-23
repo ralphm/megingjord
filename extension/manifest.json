@@ -1,0 +1,28 @@
+{
+  "manifest_version": 3,
+  "name": "Megingjord Google Meet",
+  "version": "0.1.0",
+  "description": "Google Meet state and control for Megingjord.",
+  "permissions": ["storage"],
+  "host_permissions": [
+    "https://meet.google.com/*",
+    "ws://127.0.0.1/*"
+  ],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; connect-src ws://127.0.0.1:*"
+  },
+  "background": {
+    "scripts": ["background.js"]
+  },
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": false
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://meet.google.com/*"],
+      "js": ["meet.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}
